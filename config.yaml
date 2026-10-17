@@ -39,6 +39,11 @@ paper:
 #  - Entrada llarga: en tendència alcista, el RSI torna a pujar per sobre de rsi_long
 #  - Entrada curta (si allow_short): en tendència baixista, el RSI torna a baixar per sota de rsi_short
 strategy:
+  mode: retroces            # retroces = compra retrocessos en tendència · rotacio = es queda amb els més forts
+  btc_filter: false         # true = només compra quan el BTC és per sobre de la seva mitjana de btc_ma_days dies
+  btc_ma_days: 200
+  top_n: 0                  # 0 = opera tots els valors · N = només els N amb més momentum
+  momentum_days: 30         # finestra per mesurar el momentum (rendiment dels últims N dies)
   ema_fast: 20
   ema_slow: 100
   rsi_period: 14

@@ -55,6 +55,8 @@ class Trader:
     day_blocked: bool = False
     halted: bool = False
     fees_paid: float = 0.0
+    risk_on: bool = True          # filtre de mercat (BTC per sobre de la seva mitjana): el calcula el motor
+    allowed: list | None = None   # valors permesos pel rànquing de momentum (None = tots)
 
     # ------------------------------------------------------------ creació / estat
     @classmethod
@@ -93,16 +95,21 @@ class Trader:
         return self.cash + sum(p.value(self.last_price.get(s, p.entry)) for s, p in self.positions.items())
 
     # ------------------------------------------------------------ obrir / tancar
-    def _open(self, symbol: str, side: int, price: float, atr: float, ts) -> None:
+    @property
+    def mode(self) -> str:
+        return self.cfg["strategy"].get("mode", "retroces")
+
+    def _open(self, symbol: str, side: int, price: float, atr: float, ts, target_notional: float | None = None) -> None:
         p, r = self.cfg["strategy"], self.cfg["risk"]
         fill = price * (1 + self.slip * side)
         eq = self.equity()
         stop_dist = p["stop_atr"] * atr
-        qty = (eq * r["risk_per_trade_pct"] / 100) / stop_dist
-        notional = qty * fill
-        cap = eq * r["max_position_pct"] / 100
         avail = self.cash / (1 + self.fee) * 0.999
-        notional = min(notional, cap, avail)
+        if target_notional is not None:        # rotació: pes fix per valor
+            notional = min(target_notional, avail)
+        else:                                  # retrocés: mida segons el risc fins al stop
+            qty = (eq * r["risk_per_trade_pct"] / 100) / stop_dist
+            notional = min(qty * fill, eq * r["max_position_pct"] / 100, avail)
         if notional < self.cfg["paper"]["min_order_eur"]:
             return
         qty = notional / fill
@@ -111,7 +118,8 @@ class Trader:
         self.fees_paid += fee
         self.positions[symbol] = Position(
             symbol=symbol, side=side, qty=qty, entry=fill, entry_ts=str(ts), atr=atr,
-            stop=fill - side * stop_dist, tp=fill + side * p["take_profit_atr"] * atr,
+            stop=fill - side * stop_dist,
+            tp=fill * 1000 if target_notional is not None else fill + side * p["take_profit_atr"] * atr,
             best=fill, fee_in=fee,
         )
         log.info("OBRE %s %s qty=%.6f a %.4f (stop %.4f, tp %.4f)",
@@ -191,25 +199,50 @@ class Trader:
                 pos.stop = min(pos.stop, pos.best + p["trail_atr"] * pos.atr)
                 pos.trailed = True
 
-    def on_bar_close(self, symbol: str, row: pd.Series, ts) -> None:
-        """Una espelma s'ha tancat: sortides per tendència/temps i noves entrades."""
+    def _in_cooldown(self, symbol: str, ts) -> bool:
+        cd = self.cooldown_until.get(symbol)
+        return bool(cd) and pd.Timestamp(ts) < pd.Timestamp(cd)
+
+    def on_bar_close(self, symbol: str, row, ts) -> None:
+        """Una espelma s'ha tancat: sortides per tendència/temps i noves entrades (mode retrocés)."""
         p, r = self.cfg["strategy"], self.cfg["risk"]
         price = float(row["close"])
         self.last_price[symbol] = price
         pos = self.positions.get(symbol)
         if pos is not None:
             pos.bars += 1
+            if self.mode == "rotacio":
+                return                             # en rotació, les sortides les decideix rebalance()
             if p.get("exit_on_trend_flip") and row["trend"] == -pos.side:
                 self._close(symbol, price, ts, "canvi_tendencia")
             elif p.get("max_hold_bars", 0) and pos.bars >= p["max_hold_bars"]:
                 self._close(symbol, price, ts, "temps_maxim")
             return
-
+        if self.mode == "rotacio":
+            return
         if self.halted or self.day_blocked or len(self.positions) >= r["max_open_positions"]:
             return
-        cd = self.cooldown_until.get(symbol)
-        if cd and pd.Timestamp(ts) < pd.Timestamp(cd):
+        if p.get("btc_filter") and not self.risk_on:
+            return
+        if self.allowed is not None and symbol not in self.allowed:
+            return
+        if self._in_cooldown(symbol, ts):
             return
         sig = signal(row, p, self.cfg.get("allow_short", False), self.round_trip_cost_pct())
         if sig:
             self._open(symbol, sig, price, float(row["atr"]), ts)
+
+    def rebalance(self, targets: list, atrs: dict, ts) -> None:
+        """Mode rotació: manté exactament els valors de `targets` (els més forts), a parts iguals."""
+        reason = "rotacio" if self.risk_on else "filtre_btc"
+        for s in list(self.positions):
+            if s not in targets:
+                self._close(s, self.last_price.get(s, self.positions[s].entry), ts, reason)
+        if self.halted or self.day_blocked or not targets:
+            return
+        n = max(1, int(self.cfg["strategy"].get("top_n", 3)))
+        weight = self.equity() / n * 0.98
+        for s in targets:
+            if s in self.positions or s not in self.last_price or not atrs.get(s) or self._in_cooldown(s, ts):
+                continue
+            self._open(s, 1, self.last_price[s], float(atrs[s]), ts, target_notional=weight)

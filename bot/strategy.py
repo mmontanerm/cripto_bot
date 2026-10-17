@@ -27,7 +27,7 @@ def atr(df: pd.DataFrame, n: int) -> pd.Series:
     return tr.ewm(alpha=1 / n, adjust=False).mean()
 
 
-def add_indicators(df: pd.DataFrame, p: dict) -> pd.DataFrame:
+def add_indicators(df: pd.DataFrame, p: dict, bars_per_day: float = 24) -> pd.DataFrame:
     out = df.copy()
     out["ema_fast"] = ema(out["close"], p["ema_fast"])
     out["ema_slow"] = ema(out["close"], p["ema_slow"])
@@ -39,11 +39,16 @@ def add_indicators(df: pd.DataFrame, p: dict) -> pd.DataFrame:
     out.loc[up, "trend"] = 1
     out.loc[down, "trend"] = -1
     out["rsi_prev"] = out["rsi"].shift()
+    mom_bars = max(1, int(p.get("momentum_days", 30) * bars_per_day))
+    out["mom"] = out["close"] / out["close"].shift(mom_bars) - 1   # rendiment dels últims N dies
     return out
 
 
-def warmup_bars(p: dict) -> int:
-    return max(p["ema_slow"], p["rsi_period"], p["atr_period"]) + 5
+def warmup_bars(p: dict, bars_per_day: float = 24) -> int:
+    base = max(p["ema_slow"], p["rsi_period"], p["atr_period"]) + 5
+    if p.get("mode") == "rotacio" or p.get("top_n", 0):
+        base = max(base, int(p.get("momentum_days", 30) * bars_per_day) + 5)
+    return base
 
 
 def explain(row: pd.Series, p: dict, allow_short: bool, round_trip_cost_pct: float) -> tuple[str, str]:

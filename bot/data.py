@@ -75,52 +75,65 @@ class KrakenFeed:
 
 
 # ------------------------------------------------------------------ Binance (històric)
-BINANCE_URL = "https://api.binance.com/api/v3/klines"
+# Dades públiques de mercat. Si una adreça falla (bloqueig regional, caiguda), prova la següent.
+BINANCE_HOSTS = ["https://api.binance.com", "https://data-api.binance.vision", "https://api1.binance.com"]
 
 
-def _binance_symbol_exists(sym: str, interval: str) -> bool:
-    try:
-        r = requests.get(BINANCE_URL, params={"symbol": sym, "interval": interval, "limit": 1}, timeout=15)
-        return r.status_code == 200
-    except Exception:
-        return False
+def _binance(params: dict) -> list:
+    last = None
+    for host in BINANCE_HOSTS:
+        try:
+            r = requests.get(f"{host}/api/v3/klines", params=params, timeout=20)
+            if r.status_code == 400:      # el parell no existeix
+                raise KeyError(params.get("symbol"))
+            r.raise_for_status()
+            return r.json()
+        except KeyError:
+            raise
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"No puc descarregar dades de Binance: {last}")
 
 
-def fetch_history(symbol: str, timeframe: str, days: int, cache_dir: str = "data") -> pd.DataFrame:
+def fetch_history(symbol: str, timeframe: str, days: int, cache_dir: str = "data",
+                  quote: str | None = None) -> pd.DataFrame:
     """Descarrega històric de Binance (amb caché a disc).
 
-    Si el parell en EUR no existeix a Binance, fa servir el parell en USDT
-    com a aproximació (el comportament del preu és pràcticament el mateix).
+    `quote`: força una moneda de cotització (p. ex. USDT, amb molt més històric i liquiditat
+    que l'EUR). Si no s'indica, prova primer el parell original i, si no existeix, USDT.
     """
     os.makedirs(cache_dir, exist_ok=True)
-    base, quote = symbol.split("/")
-    cache = os.path.join(cache_dir, f"{base}{quote}_{timeframe}_{days}d.csv")
-    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 12 * 3600:
-        return pd.read_csv(cache, index_col=0, parse_dates=True)
-
-    sym = f"{base}{quote}"
-    if not _binance_symbol_exists(sym, timeframe):
-        alt = f"{base}USDT"
-        log.warning("%s no existeix a Binance, faig servir %s per al backtest", sym, alt)
-        sym = alt
-
-    end = int(time.time() * 1000)
-    start = end - days * 86_400_000
-    rows: list = []
-    while start < end:
-        batch = _get(BINANCE_URL, {"symbol": sym, "interval": timeframe, "startTime": start, "limit": 1000})
-        if not batch:
-            break
-        rows.extend(batch)
-        start = batch[-1][0] + 1
-        time.sleep(0.25)
-    df = pd.DataFrame(rows).iloc[:, :6]
-    df.columns = ["ts"] + COLS
-    df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
-    df = df.set_index("ts").astype(float)
-    df = df[~df.index.duplicated()].iloc[:-1]  # treu l'espelma oberta
-    df.to_csv(cache)
-    return df
+    base, q = symbol.split("/")
+    candidates = [f"{base}{quote}"] if quote else [f"{base}{q}", f"{base}USDT"]
+    for sym in candidates:
+        cache = os.path.join(cache_dir, f"{sym}_{timeframe}_{days}d.csv")
+        if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 12 * 3600:
+            return pd.read_csv(cache, index_col=0, parse_dates=True)
+        try:
+            _binance({"symbol": sym, "interval": timeframe, "limit": 1})
+        except KeyError:
+            log.warning("%s no existeix a Binance", sym)
+            continue
+        end = int(time.time() * 1000)
+        start = end - days * 86_400_000
+        rows: list = []
+        while start < end:
+            batch = _binance({"symbol": sym, "interval": timeframe, "startTime": start, "limit": 1000})
+            if not batch:
+                break
+            rows.extend(batch)
+            start = batch[-1][0] + 1
+            time.sleep(0.15)
+        if not rows:
+            continue
+        df = pd.DataFrame(rows).iloc[:, :6]
+        df.columns = ["ts"] + COLS
+        df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+        df = df.set_index("ts").astype(float)
+        df = df[~df.index.duplicated()].iloc[:-1]  # treu l'espelma oberta
+        df.to_csv(cache)
+        return df
+    raise KeyError(f"{symbol}: sense dades a Binance")
 
 
 def load_csv(path: str) -> pd.DataFrame:

@@ -14,3 +14,5 @@ STATE = os.path.join(STATE_DIR, "paper_state.json")
 STATUS = os.path.join(STATE_DIR, "status.json")
 TRADES = os.path.join(STATE_DIR, "trades.csv")
 EQUITY = os.path.join(STATE_DIR, "equity.csv")
+OVERRIDE = os.path.join(STATE_DIR, "config_lab.yaml")   # ajustos aplicats des del laboratori
+LAB_DIR = os.path.join(STATE_DIR, "lab")

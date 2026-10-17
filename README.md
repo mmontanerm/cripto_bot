@@ -99,6 +99,19 @@ En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 - **Aturar-lo:** a Render, *Settings → Suspend Service*. Mentre està suspès no es cobra el servei.
 - **Rearmar després d'una aturada d'emergència:** pestanya **Shell** → `python status.py --reset-halt` i després *Manual Deploy → Restart service*.
 
+## Laboratori de proves (des del panell)
+
+Al panell hi ha el **Laboratori de proves**. Tries la caiguda màxima que acceptes (15, 25 o 35%) i prems **Fes la prova**. En uns 10-15 minuts:
+
+1. Descarrega uns 3 anys i mig d'espelmes reals de Binance (parells en USDT, que tenen més històric i liquiditat).
+2. Prova 4 estratègies: l'actual, el retrocés amb espelmes de 4 h, el retrocés amb filtre BTC i rànquing de momentum, i la rotació dels més forts amb filtre BTC.
+3. Fa servir el mètode **walk-forward**: per a cada trimestre dels últims 2 anys, tria els paràmetres amb els 12 mesos anteriors i els prova en el trimestre següent, que no ha vist mai.
+4. Les compara amb comprar Bitcoin, o els 12 valors, i no tocar res.
+
+La recomanada és la de més rendiment anual que no passa de la caiguda que has triat. Amb **Aplica-la al bot (simulació)**, el bot comença a fer-la servir en menys d'un minut. Els ajustos es desen al disc de Render (`state/config_lab.yaml`) i tenen prioritat sobre `config.yaml`. **Torna a la configuració de GitHub** els retira.
+
+En local: `python run_lab.py --dd 25`.
+
 ## Altres maneres de tenir-lo encès 24/7
 
 Si no vols fer servir Render:

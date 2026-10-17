@@ -12,13 +12,23 @@ import hmac
 import json
 import logging
 import os
+import subprocess
+import sys
 import threading
+import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .paths import EQUITY, LOG_DIR, STATUS, TRADES
+import yaml
+
+from .paths import EQUITY, LAB_DIR, LOG_DIR, OVERRIDE, STATUS, TRADES
 
 log = logging.getLogger("panell")
 HTML_PATH = os.path.join(os.path.dirname(__file__), "static", "panell.html")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LAB_STATUS = os.path.join(LAB_DIR, "estat.json")
+LAB_RESULTS = os.path.join(LAB_DIR, "resultats.json")
+_lab_lock = threading.Lock()
 
 
 def _read_json(path: str) -> dict:
@@ -70,6 +80,79 @@ def collect() -> dict:
     }
 
 
+def _pid_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def lab_state() -> dict:
+    st = _read_json(LAB_STATUS)
+    if st.get("estat") in ("descarregant", "provant"):
+        age = time.time() - datetime.fromisoformat(st["actualitzat"]).timestamp() if st.get("actualitzat") else 1e9
+        if not _pid_alive(st.get("pid", -1)) or age > 900:
+            st["estat"] = "interrompuda"
+            st["missatge"] = "La prova s'ha interromput (probablement el servei s'ha reiniciat). Torna-la a llançar."
+    override = None
+    if os.path.exists(OVERRIDE):
+        try:
+            with open(OVERRIDE, encoding="utf-8") as f:
+                override = yaml.safe_load(f)
+        except Exception:
+            override = None
+    return {"estat": st, "resultats": _read_json(LAB_RESULTS) or None, "aplicada": override}
+
+
+def lab_start(dd: float) -> tuple[int, str]:
+    with _lab_lock:
+        st = lab_state()["estat"]
+        if st.get("estat") in ("descarregant", "provant"):
+            return 409, "Ja hi ha una prova en marxa."
+        os.makedirs(LAB_DIR, exist_ok=True)
+        with open(LAB_STATUS, "w", encoding="utf-8") as f:
+            json.dump({"estat": "descarregant", "pct": 0, "missatge": "Arrencant la prova",
+                       "actualitzat": datetime.now(timezone.utc).isoformat(), "pid": os.getpid()}, f)
+
+        def lower_priority():  # que el laboratori no alenteixi el bot
+            os.nice(10)
+        subprocess.Popen([sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd)], cwd=ROOT,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                         preexec_fn=lower_priority)
+        log.info("Laboratori llançat des del panell (caiguda màxima acceptada %s%%)", dd)
+        return 202, "Prova en marxa."
+
+
+def lab_apply(strategy_id: str) -> tuple[int, str]:
+    res = _read_json(LAB_RESULTS)
+    strat = next((s for s in res.get("estrategies", []) if s["id"] == strategy_id), None)
+    if strat is None:
+        return 404, "No trobo aquesta estratègia als resultats."
+    if strategy_id == "actual":
+        return lab_reset()
+    override = {
+        "timeframe": strat["temporalitat"],
+        "strategy": strat["parametres_recomanats"],
+        "risk": {"max_drawdown_pct": float(res.get("caiguda_maxima_acceptada_pct", 25))},
+        "_origen": {"id": strategy_id, "nom": strat["nom"], "aplicada": datetime.now(timezone.utc).isoformat(),
+                    "prova": res.get("generat")},
+    }
+    tmp = OVERRIDE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        yaml.safe_dump(override, f, allow_unicode=True, sort_keys=False)
+    os.replace(tmp, OVERRIDE)
+    log.info("Estratègia del laboratori aplicada des del panell: %s", strat["nom"])
+    return 200, f"Aplicada: {strat['nom']}. El bot la farà servir en menys d'un minut."
+
+
+def lab_reset() -> tuple[int, str]:
+    if os.path.exists(OVERRIDE):
+        os.remove(OVERRIDE)
+        log.info("Ajustos del laboratori retirats: el bot torna a config.yaml de GitHub")
+    return 200, "El bot torna a fer servir la configuració de GitHub."
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "cripto-bot"
 
@@ -119,7 +202,38 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/data":
             body = json.dumps(collect(), default=str).encode()
             return self._send(200, body, "application/json")
+        if path == "/api/lab":
+            return self._send(200, json.dumps(lab_state(), default=str).encode(), "application/json")
         return self._send(404, b"not found", "text/plain")
+
+    def do_POST(self):  # noqa: N802
+        path = self.path.split("?")[0]
+        if not self._authorized():
+            return self._send(401, "Cal contrasenya".encode(), "text/plain; charset=utf-8",
+                              {"WWW-Authenticate": 'Basic realm="Cripto-bot", charset="UTF-8"'})
+        # Protecció contra peticions des d'altres webs: cal la capçalera pròpia i el mateix origen
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host", "")
+        if self.headers.get("X-Panell") != "1" or (origin and origin.split("://", 1)[-1] != host):
+            return self._send(403, b"forbidden", "text/plain")
+        try:
+            length = min(int(self.headers.get("Content-Length") or 0), 10_000)
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            return self._send(400, b"bad request", "text/plain")
+        if path == "/api/lab/start":
+            try:
+                dd = max(5.0, min(50.0, float(body.get("dd", 25))))
+            except Exception:
+                dd = 25.0
+            code, msg = lab_start(dd)
+        elif path == "/api/lab/apply":
+            code, msg = lab_apply(str(body.get("id", "")))
+        elif path == "/api/lab/reset":
+            code, msg = lab_reset()
+        else:
+            return self._send(404, b"not found", "text/plain")
+        return self._send(code, json.dumps({"missatge": msg}).encode(), "application/json")
 
 
 def start(port: int | None = None) -> ThreadingHTTPServer:

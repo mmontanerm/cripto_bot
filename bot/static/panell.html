@@ -126,6 +126,43 @@ details[open] summary::after{content:"−"}
 .params{display:grid;grid-template-columns:1fr auto;gap:4px 16px;font-size:.92rem;margin:6px 0 10px}
 .params dt{color:var(--muted)} .params dd{margin:0;text-align:right;font-weight:500}
 .note{font-size:.85rem;color:var(--muted);margin:4px 0 8px}
+
+/* ---------- laboratori ---------- */
+.lab{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px}
+.lab-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.lab p{margin:.3rem 0 .6rem;color:var(--muted);font-size:.93rem;max-width:72ch}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:6px}
+.controls label{font-size:.92rem;color:var(--muted)}
+select{font:inherit;color:var(--ink);background:var(--panel);border:1.5px solid var(--rule);border-radius:6px;padding:5px 8px}
+.btn{font:inherit;font-weight:600;border:0;border-radius:6px;padding:8px 16px;cursor:pointer;background:var(--line);color:var(--panel)}
+.btn.ghost{background:none;color:var(--line);box-shadow:inset 0 0 0 1.5px var(--line)}
+.btn:disabled{opacity:.5;cursor:default}
+.bar{height:8px;background:var(--sunk);border-radius:4px;overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;background:var(--line);transition:width .6s}
+.winner{border-left:4px solid var(--line);background:var(--sunk);border-radius:6px;padding:12px 14px;margin:10px 0 14px}
+.winner h3{font-family:"Barlow Semi Condensed",sans-serif;font-weight:600;font-size:1.25rem;margin:2px 0 4px}
+.winner .nums{display:flex;flex-wrap:wrap;gap:4px 22px;margin:6px 0 10px;font-size:.95rem;color:var(--muted)}
+.winner .nums b{color:var(--ink);font-size:1.1rem;margin-left:4px}
+.warn{color:var(--amber);font-weight:600}
+.cmp{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:4px}
+.cmp th{font-weight:500;color:var(--muted);text-align:right;padding:6px 0 6px 10px;border-bottom:1px solid var(--rule)}
+.cmp th:first-child,.cmp td:first-child{text-align:left;padding-left:0}
+.cmp td{text-align:right;padding:8px 0 8px 10px;border-top:1px solid var(--rule);vertical-align:top}
+.cmp tr.ref td{color:var(--muted);font-style:italic}
+.cmp .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:baseline}
+.cmp details{border:0;margin:0}
+.cmp summary{font-family:inherit;font-size:inherit;font-weight:600;padding:0;display:inline}
+.cmp summary::after{content:""}
+.cmp .more-info{font-weight:400;font-size:.86rem;color:var(--muted);margin:6px 0 2px;line-height:1.45}
+.applied{display:inline-block;font-size:.8rem;font-weight:600;color:var(--gain);margin-left:6px}
+#labchart{height:230px;margin:12px -4px 4px;position:relative}
+#labchart svg{width:100%;height:100%;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.82rem;color:var(--muted);margin-bottom:6px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:14px;height:3px;border-radius:2px;display:inline-block}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--panel);
+  padding:10px 16px;border-radius:8px;font-size:.92rem;max-width:min(92vw,520px);display:none;z-index:9}
+@media (max-width:640px){.cmp .hide-s{display:none}}
 footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
 </style>
 </head>
@@ -161,6 +198,12 @@ footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
     </div>
   </div>
 
+
+  <section class="lab" id="lab">
+    <div class="lab-head"><h2>Laboratori de proves</h2><span class="state" id="lab-when"></span></div>
+    <div id="lab-body"><p>Carregant…</p></div>
+  </section>
+
   <div class="grid">
     <div class="col">
       <section>
@@ -186,17 +229,18 @@ footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
         <details>
           <summary>Paràmetres actius</summary>
           <dl class="params" id="params"></dl>
-          <p class="note">Per canviar-los, edita config.yaml a GitHub. El bot s'actualitza sol en un parell de minuts.</p>
+          <p class="note">Per canviar-los, aplica una estratègia del laboratori o edita config.yaml a GitHub. Els ajustos del laboratori tenen prioritat sobre GitHub.</p>
         </details>
       </section>
     </div>
   </div>
+  <div class="toast" id="toast" role="status"></div>
   <footer id="foot">Diners simulats amb preus reals de Kraken. El panell només mostra informació: no pot comprar ni vendre.</footer>
 </div>
 
 <script>
 const fmtEUR = new Intl.NumberFormat("ca-ES",{style:"currency",currency:"EUR",minimumFractionDigits:2,maximumFractionDigits:2});
-const fmtNum = (v,d=2)=> new Intl.NumberFormat("ca-ES",{minimumFractionDigits:d,maximumFractionDigits:d}).format(v);
+const fmtNum = (v,d=2)=> new Intl.NumberFormat("ca-ES",{minimumFractionDigits:d,maximumFractionDigits:d}).format(Math.abs(v)<0.5*10**-d?0:v);
 const fmtPrice = v => v==null ? "—" : fmtNum(v, v>=100?2: v>=1?3: v>=0.01?4:6);
 const pct = (v,d=2)=> (v>0?"+":"")+fmtNum(v,d)+" %";
 const sign = v => v>0?"pos":v<0?"neg":"";
@@ -204,7 +248,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const REASON = {stop:"Stop de pèrdues",stop_dinamic:"Stop dinàmic (protegeix guanys)",objectiu:"Objectiu assolit",
   canvi_tendencia:"Canvi de tendència",temps_maxim:"Temps màxim",aturada_emergencia:"Aturada d'emergència",fi_backtest:"Final de prova"};
-const ORDER = {in:0,a_punt:1,esperant:2,lateral:3,baixista:4,poc_moviment:5,sense_dades:6};
+const ORDER = {in:0,a_punt:1,esperant:2,lateral:3,baixista:4,filtre:5,poc_moviment:6,sense_dades:7};
 let data = null, showAll = false;
 
 function ago(ts){
@@ -309,7 +353,7 @@ function renderRadar(st){
   rows.sort((a,b)=>(ORDER[a.k]??9)-(ORDER[b.k]??9) || a.s.localeCompare(b.s));
   if(!rows.length){ $("radar").innerHTML='<li><span class="empty" style="grid-column:1/-1">Llegint els primers preus…</span></li>'; return; }
   const TAG={in:["in","En posició"],a_punt:["ready","A punt"],esperant:["wait","Esperant"],lateral:["","Lateral"],
-    baixista:["","Baixista"],poc_moviment:["","Massa quiet"],sense_dades:["","Sense dades"]};
+    baixista:["","Baixista"],poc_moviment:["","Massa quiet"],sense_dades:["","Sense dades"],filtre:["","Filtre BTC"]};
   $("radar").innerHTML = rows.map(({s,m,k})=>{ const [c,l]=TAG[k]||["",k];
     const why = k==="in" ? `Posició oberta. Tendència ${m.tendencia}, RSI ${fmtNum(m.rsi,0)}.` : m.explicacio;
     return `<li><span class="sym">${esc(s.replace("/EUR",""))}</span><span class="tag ${c}">${l}</span>
@@ -339,7 +383,12 @@ function renderLog(lines){
 
 function renderParams(c){
   if(!c) return; const s=c.estrategia, r=c.risc;
-  const rows=[["Temporalitat",data.status.timeframe],["Tendència (EMA ràpida / lenta)",`${s.ema_fast} / ${s.ema_slow}`],
+  const lab = c.laboratori && c.laboratori._origen;
+  const rows=[["Origen",lab?`Laboratori: ${lab.nom}`:"config.yaml de GitHub"],["Estratègia",s.mode==="rotacio"?`Rotació dels ${s.top_n||3} més forts`:"Retrocés en tendència"],
+    ["Filtre BTC",s.btc_filter||s.mode==="rotacio"?`Actiu (mitjana de ${s.btc_ma_days} dies)${data.status.filtre_btc_favorable===false?", ara desfavorable":""}`:"Desactivat"],
+    ...(s.top_n&&s.mode!=="rotacio"?[["Rànquing",`Només els ${s.top_n} més forts (${s.momentum_days} dies)`]]:[]),
+    ...(s.mode==="rotacio"?[["Momentum",`${s.momentum_days} dies`]]:[]),
+    ["Temporalitat",data.status.timeframe],["Tendència (EMA ràpida / lenta)",`${s.ema_fast} / ${s.ema_slow}`],
     ["Compra quan el RSI supera",s.rsi_long],["Stop de pèrdues",`${s.stop_atr} × ATR`],["Objectiu de guany",`${s.take_profit_atr} × ATR`],
     ["Stop dinàmic",`s'activa a ${s.trail_activate_atr} × ATR, distància ${s.trail_atr} × ATR`],["Marge mínim sobre costos",`${s.min_edge_over_costs} ×`],
     ["Comissió simulada",`${c.comissio_pct} %`],["Risc per operació",`${r.risk_per_trade_pct} % del capital`],["Posició màxima",`${r.max_position_pct} % del capital`],
@@ -363,7 +412,118 @@ async function load(){
 }
 load(); setInterval(load,30000);
 setInterval(()=>{ const a=$("ago"); if(a&&data) a.textContent=ago(data.status.actualitzat); },1000);
-let rz; addEventListener("resize",()=>{clearTimeout(rz); rz=setTimeout(()=>data&&renderChart(data.equity,data.status.capital_inicial_eur),150);});
+
+/* ---------------- laboratori ---------------- */
+const LAB_COLORS = {actual:"#8A97A5", retroces_4h:"#1C7A72", retroces_filtres:"#7A3E8E", rotacio:"#A0661A"};
+let lab = null, labTimer = null;
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none",4500); }
+async function post(path, body){
+  const r = await fetch(path,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Panell":"1"},body:JSON.stringify(body||{})});
+  let j={}; try{ j=await r.json(); }catch(e){}
+  if(!r.ok) throw new Error(j.missatge || ("Error "+r.status));
+  return j;
+}
+function ddSelect(cur){
+  const v = cur || 25;
+  return `<label for="dd">Caiguda màxima que acceptes</label>
+    <select id="dd">${[15,25,35].map(x=>`<option value="${x}" ${x==v?"selected":""}>${x} %</option>`).join("")}</select>`;
+}
+async function startLab(){
+  const b=$("lab-go"); if(b) b.disabled=true;
+  try{ await post("api/lab/start",{dd: parseFloat($("dd").value)}); toast("Prova en marxa. Pots tancar el panell: continuarà treballant."); }
+  catch(e){ toast(e.message); }
+  loadLab();
+}
+async function applyStrat(id){
+  try{ const j=await post("api/lab/apply",{id}); toast(j.missatge); }catch(e){ toast(e.message); }
+  loadLab(); setTimeout(load,1500);
+}
+async function resetStrat(){
+  try{ const j=await post("api/lab/reset",{}); toast(j.missatge); }catch(e){ toast(e.message); }
+  loadLab(); setTimeout(load,1500);
+}
+const fmtP = v => v==null ? "—" : pct(v,1);
+const monthYear = d => new Date(d).toLocaleDateString("ca-ES",{month:"short",year:"numeric"});
+function paramText(p){
+  const L={mode:v=>v==="rotacio"?"Rotació":"Retrocés",btc_filter:v=>v?"Filtre BTC actiu":"Sense filtre BTC",top_n:v=>v?`Els ${v} més forts`:"Tots els valors",
+    momentum_days:v=>`Momentum de ${v} dies`,stop_atr:v=>`Stop a ${v} × ATR`,take_profit_atr:v=>`Objectiu a ${v} × ATR`,rsi_long:v=>`Compra quan el RSI supera ${v}`,
+    ema_slow:v=>`Tendència amb EMA de ${v}`,trail_activate_atr:v=>`Stop dinàmic des de ${v} × ATR`,trail_atr:v=>`a ${v} × ATR`};
+  return Object.entries(p||{}).filter(([k])=>L[k]).map(([k,v])=>L[k](v)).join(", ");
+}
+function renderLab(){
+  const body=$("lab-body"); if(!lab) return;
+  const st=lab.estat||{}, res=lab.resultats, ap=lab.aplicada;
+  const running = st.estat==="descarregant" || st.estat==="provant";
+  clearTimeout(labTimer); if(running) labTimer=setTimeout(loadLab,5000);
+  $("lab-when").textContent = res && !running ? `Última prova ${ago(res.generat)}` : "";
+  if(running){
+    body.innerHTML=`<p>${esc(st.missatge||"Treballant…")}</p><div class="bar"><i style="width:${st.pct||0}%"></i></div>
+      <p>${fmtNum(st.pct||0,0)} % fet. Sol trigar uns 10-15 minuts. Pots tancar el panell: la prova continua i els resultats apareixeran aquí.</p>`;
+    return;
+  }
+  const intro = `<p>Prova 4 estratègies amb uns 3 anys i mig d'espelmes reals de Binance. Per a cada trimestre dels últims 2 anys, tria els paràmetres amb els 12 mesos anteriors i els prova en el trimestre següent, que no ha vist mai. És el més semblant a haver tingut el bot funcionant tot aquest temps. Tarda uns 10-15 minuts.</p>`;
+  const errMsg = (st.estat==="error"||st.estat==="interrompuda") ? `<p class="warn">${esc(st.missatge)}</p>` : "";
+  if(!res){
+    body.innerHTML = intro + errMsg + `<div class="controls">${ddSelect()}<button class="btn" id="lab-go" onclick="startLab()">Fes la prova</button></div>`;
+    return;
+  }
+  const all=res.estrategies, best=all.find(s=>s.id===res.recomanada), appliedId=ap?._origen?.id;
+  const per=`${monthYear(res.periode_prova.des_de)} – ${monthYear(res.periode_prova.fins)}`;
+  const synth = res.dades_sintetiques ? `<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>` : "";
+  const bestBox = `<div class="winner">
+      <div class="sub" style="margin:0">${res.recomanada_compleix?`La de més rendiment sense passar del ${res.caiguda_maxima_acceptada_pct} % de caiguda`:`Cap estratègia es queda per sota del ${res.caiguda_maxima_acceptada_pct} % de caiguda. Aquesta és la que cau menys`}</div>
+      <h3>${esc(best.nom)}</h3>
+      <div class="nums"><span>Rendiment anual<b class="${sign(best.rendiment_anual_pct)}">${fmtP(best.rendiment_anual_pct)}</b></span>
+        <span>Caiguda màxima<b>${fmtNum(best.caiguda_maxima_pct,1)} %</b></span>
+        <span>Operacions a l'any<b>${fmtNum(best.operacions_any,0)}</b></span>
+        <span>Mesos positius<b>${best.mesos_positius_pct==null?"—":fmtNum(best.mesos_positius_pct,0)+" %"}</b></span></div>
+      <div class="sub" style="margin:0 0 10px">Paràmetres per a ara (ajustats amb els últims 12 mesos): ${esc(paramText(best.parametres_recomanats)||"els actuals")}.</div>
+      ${appliedId===best.id ? `<span class="applied">Aplicada al bot</span> <button class="btn ghost" onclick="resetStrat()">Torna a la configuració de GitHub</button>`
+        : best.id==="actual" ? `<span class="sub">És la que ja fa servir el bot.</span>`
+        : `<button class="btn" onclick="applyStrat('${best.id}')">Aplica-la al bot (simulació)</button>`}
+    </div>`;
+  const rows = all.map(s=>`<tr><td><details><summary><span class="sw" style="background:${LAB_COLORS[s.id]||"var(--line)"}"></span>${esc(s.nom)}</summary>
+        <div class="more-info">${esc(s.desc)}<br>Paràmetres per a ara: ${esc(paramText(s.parametres_recomanats)||"els actuals")}.<br>
+        Per trimestres: ${s.finestres.map(w=>`${monthYear(w.des_de)} ${pct(w.rendiment_pct,1)}`).join(", ")}.<br>
+        ${s.id!=="actual" && appliedId!==s.id ? `<button class="btn ghost" style="margin-top:6px" onclick="applyStrat('${s.id}')">Aplica aquesta</button>`:""}
+        ${appliedId===s.id?'<span class="applied">Aplicada al bot</span>':""}</div></details></td>
+      <td class="${sign(s.rendiment_anual_pct)}">${fmtP(s.rendiment_anual_pct)}</td>
+      <td>${fmtNum(s.caiguda_maxima_pct,1)} %${s.compleix_caiguda?"":' <span class="warn" title="Supera el límit">!</span>'}</td>
+      <td class="hide-s">${fmtNum(s.operacions_any,0)}</td><td class="hide-s">${fmtNum(s.comissions_pct_any,1)} %</td></tr>`).join("")
+    + res.referencies.map(r=>`<tr class="ref"><td><span class="sw" style="background:var(--muted)"></span>${esc(r.nom)}</td>
+      <td>${fmtP(r.rendiment_anual_pct)}</td><td>${fmtNum(r.caiguda_maxima_pct,1)} %</td><td class="hide-s">—</td><td class="hide-s">—</td></tr>`).join("");
+  body.innerHTML = synth + errMsg + `<p>Resultats fora de mostra de ${per}, amb comissions del ${fmtNum(res.comissio_pct,2)} % per operació. Rendiments passats no garanteixen els futurs.</p>`
+    + bestBox
+    + `<div class="legend" id="lab-legend"></div><div id="labchart"></div>
+      <table class="cmp"><thead><tr><th>Estratègia</th><th>Anual</th><th>Caiguda màx.</th><th class="hide-s">Operacions/any</th><th class="hide-s">Comissions/any</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="controls" style="margin-top:14px">${ddSelect(res.caiguda_maxima_acceptada_pct)}<button class="btn ghost" id="lab-go" onclick="startLab()">Torna a fer la prova</button></div>`;
+  renderLabChart(res);
+}
+function renderLabChart(res){
+  const box=$("labchart"); if(!box) return;
+  const series=[...res.estrategies.map(s=>({id:s.id,nom:s.nom,c:LAB_COLORS[s.id]||"#2457A6",pts:s.corba,w:s.id===res.recomanada?2.6:1.6})),
+    ...res.referencies.map(r=>({id:r.id,nom:r.nom,c:"var(--muted)",pts:r.corba,w:1.2,dash:r.id==="btc"?"5 4":"2 3"}))].filter(s=>s.pts&&s.pts.length>1);
+  if(!series.length){ box.innerHTML=""; return; }
+  const W=box.clientWidth||700,H=box.clientHeight||230,pl=40,pr=8,pt=8,pb=20;
+  const allT=series.flatMap(s=>s.pts.map(p=>new Date(p[0]).getTime())), allV=series.flatMap(s=>s.pts.map(p=>p[1])).filter(v=>v>0);
+  const t0=Math.min(...allT),t1=Math.max(...allT); let lo=Math.log(Math.min(...allV)),hi=Math.log(Math.max(...allV)); if(hi-lo<0.05){hi+=0.05;lo-=0.05;}
+  const X=t=>pl+(t-t0)/(t1-t0||1)*(W-pl-pr), Y=v=>pt+(hi-Math.log(Math.max(v,1e-9)))/(hi-lo)*(H-pt-pb);
+  const ticks=[]; [125,250,500,1000,2000,4000,8000,16000,32000,64000].forEach(v=>{const l=Math.log(v); if(l>=lo&&l<=hi) ticks.push(v);});
+  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Evolució de 1.000 euros amb cada estratègia">
+    ${ticks.map(v=>`<line x1="${pl}" x2="${W-pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--rule)" stroke-width="1" ${v===1000?'stroke-dasharray="3 3"':""}/>
+      <text x="${pl-6}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${v>=1000?fmtNum(v/1000,v%1000?1:0)+" k":v}</text>`).join("")}
+    ${series.map(s=>`<path d="${s.pts.map((p,i)=>(i?"L":"M")+X(new Date(p[0]).getTime()).toFixed(1)+" "+Y(p[1]).toFixed(1)).join(" ")}" fill="none" stroke="${s.c}"
+      stroke-width="${s.w}" ${s.dash?`stroke-dasharray="${s.dash}"`:""} stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`).join("")}
+    <text x="${pl}" y="${H-4}" font-size="11" fill="var(--muted)">${monthYear(t0)}</text><text x="${W-pr}" y="${H-4}" font-size="11" fill="var(--muted)" text-anchor="end">${monthYear(t1)}</text>
+  </svg>`;
+  $("lab-legend").innerHTML = `<span style="margin-right:4px">1.000 € invertits:</span>` + series.map(s=>`<span><i style="background:${s.c};${s.dash?"opacity:.7":""}"></i>${esc(s.nom.replace(" i no tocar res",""))}</span>`).join("");
+}
+async function loadLab(){
+  try{ const r=await fetch("api/lab",{cache:"no-store",credentials:"same-origin"}); if(!r.ok) throw 0; lab=await r.json(); renderLab(); }catch(e){}
+}
+loadLab(); setInterval(()=>{ if(!(lab&&["descarregant","provant"].includes(lab.estat?.estat))) loadLab(); },60000);
+
+let rz; addEventListener("resize",()=>{clearTimeout(rz); rz=setTimeout(()=>{ data&&renderChart(data.equity,data.status.capital_inicial_eur); lab&&lab.resultats&&renderLabChart(lab.resultats); },150);});
 </script>
 </body>
 </html>

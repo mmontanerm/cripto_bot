@@ -6,29 +6,75 @@ import logging
 import numpy as np
 import pandas as pd
 
+from .context import bars_per_day, is_day_close, rank, regime_series
 from .strategy import add_indicators, warmup_bars
 from .trader import Trader
 
 log = logging.getLogger("backtest")
 
 
-def run(cfg: dict, data: dict[str, pd.DataFrame]) -> tuple[Trader, pd.Series]:
+class _Row:
+    """Vista lleugera d'una espelma (evita crear milers de pandas.Series)."""
+    __slots__ = ("cols", "i")
+
+    def __init__(self, cols: dict, i: int):
+        self.cols, self.i = cols, i
+
+    def __getitem__(self, k):
+        return self.cols[k][self.i]
+
+
+COLS = ("open", "high", "low", "close", "atr", "trend", "rsi", "rsi_prev", "mom")
+
+
+def run(cfg: dict, data: dict[str, pd.DataFrame], trade_from=None, btc: pd.DataFrame | None = None,
+        indicators: dict | None = None) -> tuple[Trader, pd.Series]:
+    """Executa el backtest. `trade_from`: no obre posicions abans d'aquesta data (escalfament).
+    `btc`: espelmes de BTC per al filtre de mercat (si no, es fa servir data['BTC/...'] si hi és)."""
     p = cfg["strategy"]
-    wu = warmup_bars(p)
-    frames = {s: add_indicators(df, p) for s, df in data.items() if len(df) > wu}
-    for s, df in frames.items():
-        df["_i"] = np.arange(len(df))
-    index = sorted(set().union(*[df.index for df in frames.values()]))
+    tf = cfg["timeframe"]
+    bpd = bars_per_day(tf)
+    wu = warmup_bars(p, bpd)
+    mode = p.get("mode", "retroces")
+    top_n = int(p.get("top_n", 0) or 0)
+    use_regime = bool(p.get("btc_filter")) or mode == "rotacio"
+
+    frames = indicators if indicators is not None else {s: add_indicators(df, p, bpd) for s, df in data.items()}
+    frames = {s: f for s, f in frames.items() if len(f) > wu}
+    cols = {s: {c: f[c].to_numpy(dtype=float) for c in COLS} for s, f in frames.items()}
+    pos_of = {s: {ts: i for i, ts in enumerate(f.index)} for s, f in frames.items()}
+    index = sorted(set().union(*[f.index for f in frames.values()]))
+
+    regime = {}
+    if use_regime:
+        src = btc if btc is not None else next((data[s] for s in data if s.startswith("BTC/")), None)
+        if src is not None:
+            regime = regime_series(src, int(p.get("btc_ma_days", 200)), tf, index).to_dict()
+
+    trade_from = pd.Timestamp(trade_from) if trade_from is not None else None
     t = Trader.new(cfg)
+    moms: dict = {}
+    atrs: dict = {}
     curve = {}
     for ts in index:
-        bars = {s: df.loc[ts] for s, df in frames.items() if ts in df.index}
-        for s, b in bars.items():  # 1) stops i objectius dins l'espelma
-            t.on_price(s, b["open"], b["high"], b["low"], b["close"], ts)
-        t.check_risk(ts)           # 2) límits de risc globals
-        for s, b in bars.items():  # 3) espelma tancada: sortides i entrades
-            if b["_i"] >= wu:
-                t.on_bar_close(s, b, ts)
+        bars = [(s, pos_of[s][ts]) for s in frames if ts in pos_of[s]]
+        for s, i in bars:                      # 1) stops i objectius dins l'espelma
+            c = cols[s]
+            t.on_price(s, c["open"][i], c["high"][i], c["low"][i], c["close"][i], ts)
+        t.check_risk(ts)                       # 2) límits de risc globals
+        if use_regime:
+            t.risk_on = bool(regime.get(ts, False))
+        for s, i in bars:
+            moms[s] = cols[s]["mom"][i] if i >= wu else float("nan")
+            atrs[s] = cols[s]["atr"][i]
+        if top_n and mode == "retroces":
+            t.allowed = rank(moms, top_n, True)
+        can_trade = trade_from is None or ts >= trade_from
+        for s, i in bars:                      # 3) espelma tancada: sortides i entrades
+            if i >= wu and can_trade:
+                t.on_bar_close(s, _Row(cols[s], i), ts)
+        if mode == "rotacio" and can_trade and is_day_close(ts, tf):
+            t.rebalance(rank(moms, top_n or 3, t.risk_on), atrs, ts)
         curve[ts] = t.equity()
     if t.positions:
         t.close_all(index[-1], "fi_backtest")
@@ -94,3 +140,11 @@ def plot(curve: pd.Series, bench: pd.Series, path: str) -> None:
     fig.tight_layout()
     fig.savefig(path, dpi=120)
     plt.close(fig)
+
+
+def _downsample_series(s: pd.Series, n: int = 400) -> pd.Series:
+    """Redueix una corba a ~n punts per enviar-la al panell."""
+    if len(s) <= n:
+        return s
+    idx = np.linspace(0, len(s) - 1, n).astype(int)
+    return s.iloc[idx]

@@ -28,7 +28,7 @@ def synthetic(symbols, timeframe, days, seed=7):
     rng = np.random.default_rng(seed)
     mins = {"15m": 15, "30m": 30, "1h": 60, "4h": 240}[timeframe]
     n = days * 1440 // mins
-    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").floor("h"), periods=n, freq=f"{mins}min")
+    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").floor(f"{mins}min"), periods=n, freq=f"{mins}min")
     out = {}
     for s in symbols:
         vol = rng.uniform(0.004, 0.012) * np.sqrt(mins / 60)
