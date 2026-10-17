@@ -39,7 +39,7 @@ pip install -r requirements.txt
 
 ```bash
 python run_backtest.py          # 1) prova l'estratègia amb 1 any d'històric real
-python run_bot.py               # 2) arrenca el bot 24/7 (Ctrl+C per aturar-lo)
+python run_bot.py               # 2) arrenca el bot 24/7 i el panell a http://localhost:8080 (Ctrl+C per aturar)
 python status.py                # 3) mira com va: capital, posicions, últimes operacions
 ```
 
@@ -74,13 +74,28 @@ El repositori ja inclou `render.yaml`, que ho configura tot sol.
 
 **Posada en marxa (un sol cop)**
 1. A [render.com](https://render.com): **New → Blueprint** i tria aquest repositori de GitHub.
-2. Render llegeix `render.yaml` i et mostra el que crearà: un *Background Worker* "cripto-bot" amb un disc d'1 GB. Accepta-ho (cal una targeta a Render: pla Starter, uns 7 $/mes + 0,25 $ el disc).
-3. En un parell de minuts el bot ja funciona.
+2. Render llegeix `render.yaml` i et mostra el que crearà: un servei web "cripto-bot-web" amb un disc d'1 GB (pla Starter, uns 7 $/mes + 0,25 $ el disc).
+3. Quan et demani **DASHBOARD_PASSWORD**, posa-hi la contrasenya que vulguis per al panell. Si no te la demana, afegeix-la després a *Environment*.
+4. En un parell de minuts el bot ja funciona.
+
+**El panell**
+Obre l'adreça del servei (la trobaràs a dalt de tot a Render, acaba en `.onrender.com`). El navegador et demanarà usuari i contrasenya: l'usuari pot ser qualsevol, la contrasenya és la de `DASHBOARD_PASSWORD`.
+
+Hi veuràs:
+- Una columna de llum com la d'una màquina: verd = treballant, ambre = en pausa o sense notícies, vermell = aturat per seguretat.
+- El capital simulat, el rendiment total i d'avui, i la corba del capital.
+- Les posicions obertes, amb on és el preu entre el stop i l'objectiu.
+- **Què està vigilant:** cada valor amb el que el bot en pensa ara mateix i per què encara no entra.
+- Les últimes operacions amb el resultat i el motiu del tancament.
+- L'activitat recent i els paràmetres actius.
+
+Es refresca sol cada 30 segons. A l'iPad o al mòbil, *Compartir → Afegir a la pantalla d'inici* el deixa com una app. El panell només mostra informació: no pot comprar ni vendre.
+
+En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 
 **Dia a dia**
-- **Veure què fa:** a Render, servei *cripto-bot* → pestanya **Logs**. Cada hora hi apareix el capital simulat, i cada compra i venda amb el motiu.
-- **Veure l'estat complet:** pestanya **Shell** → escriu `python status.py`.
 - **Canviar paràmetres:** edita `config.yaml` directament a la web de GitHub (icona del llapis) i desa amb *Commit changes*. Render actualitza el bot sol en 1-2 minuts. El compte simulat es conserva, perquè està al disc persistent.
+- **Logs complets:** a Render, servei *cripto-bot-web* → pestanya **Logs**.
 - **Aturar-lo:** a Render, *Settings → Suspend Service*. Mentre està suspès no es cobra el servei.
 - **Rearmar després d'una aturada d'emergència:** pestanya **Shell** → `python status.py --reset-halt` i després *Manual Deploy → Restart service*.
 

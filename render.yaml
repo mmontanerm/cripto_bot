@@ -1,15 +1,16 @@
-# Configuració de Render (Blueprint): crea el bot com a servei 24/7 automàticament.
+# Configuració de Render (Blueprint): bot 24/7 + panell web en un sol servei.
 # A Render: New → Blueprint → tria aquest repositori de GitHub.
 services:
-  - type: worker              # procés en segon pla, sempre encès (no és una web)
-    name: cripto-bot
+  - type: web                 # servei web: el bot treballa en segon pla i el panell té adreça pròpia
+    name: cripto-bot-web
     runtime: python
-    plan: starter             # el pla gratuït no admet workers ni discos
+    plan: starter             # el pla gratuït s'adorm i no admet discos
     region: frankfurt         # el centre de dades més proper a Barcelona
     branch: main
     autoDeploy: true          # cada canvi a GitHub (p. ex. a config.yaml) actualitza el bot
     buildCommand: pip install -r requirements.txt
     startCommand: python run_bot.py
+    healthCheckPath: /health
     envVars:
       - key: DATA_DIR
         value: /var/data      # l'estat i els logs van al disc persistent
@@ -17,7 +18,9 @@ services:
         value: 3.12.8
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: DASHBOARD_PASSWORD
+        sync: false           # la contrasenya del panell: la poses tu a Render, mai a GitHub
     disk:
-      name: cripto-bot-data
+      name: cripto-bot-web-data
       mountPath: /var/data
       sizeGB: 1

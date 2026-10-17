@@ -12,12 +12,13 @@ import pandas as pd
 
 from .config import ConfigWatcher
 from .data import KrakenFeed
-from .strategy import add_indicators, warmup_bars
+from .paths import EQUITY, STATE, STATE_DIR, STATUS, TRADES
+from .strategy import add_indicators, explain, warmup_bars
 from .trader import Trader
 
 log = logging.getLogger("engine")
 
-from .paths import STATE, STATE_DIR, STATUS, TRADES
+TREND = {1: "alcista", -1: "baixista", 0: "lateral"}
 
 
 def save_json(path: str, obj: dict) -> None:
@@ -46,6 +47,9 @@ class Engine:
             log.info("Compte simulat nou amb %.2f EUR", self.trader.cash)
         self._n_trades = len(self.trader.trades)
         self.unavailable: dict[str, float] = {}  # valors que l'exchange no té (es reintenta cada hora)
+        self.market: dict[str, dict] = {}        # què veu el bot de cada valor (per al panell)
+        self.started = str(pd.Timestamp(datetime.now(timezone.utc)))
+        self._last_equity_log = 0.0
         sig.signal(sig.SIGTERM, self._stop)
         sig.signal(sig.SIGINT, self._stop)
 
@@ -79,14 +83,21 @@ class Engine:
             if len(df) < warmup_bars(p):
                 continue
             last_ts = str(df.index[-1])
-            if s not in self.last_bar:          # primer cop: no actuem sobre un senyal antic
-                self.last_bar[s] = last_ts
-                continue
-            if last_ts != self.last_bar[s]:     # espelma nova tancada
-                self.last_bar[s] = last_ts
+            new_bar = last_ts != self.last_bar.get(s)
+            if new_bar or s not in self.market:
                 row = add_indicators(df, p).iloc[-1]
-                self.trader.on_bar_close(s, row, df.index[-1])
-                self.trader.last_price[s] = price
+                # Primer cop que veiem el valor: no actuem sobre un senyal antic
+                if new_bar and s in self.last_bar:
+                    self.trader.on_bar_close(s, row, df.index[-1])
+                    self.trader.last_price[s] = price
+                self.last_bar[s] = last_ts
+                code, text = explain(row, p, self.cfg.get("allow_short", False), self.trader.round_trip_cost_pct())
+                self.market[s] = {
+                    "tendencia": TREND[int(row["trend"])], "rsi": round(float(row["rsi"]), 1),
+                    "volatilitat_pct": round(float(row["atr"] / row["close"] * 100), 2),
+                    "estat": code, "explicacio": text, "espelma": last_ts,
+                }
+            self.market[s]["preu"] = price
             time.sleep(0.5)                      # respecta el límit de peticions de l'API pública
         self.trader.check_risk(now)
         self._persist(now)
@@ -101,18 +112,36 @@ class Engine:
             self._n_trades = len(t.trades)
         cap = self.cfg["paper"]["initial_capital"]
         eq = t.equity()
+        if time.time() - self._last_equity_log >= 300:   # corba de capital: un punt cada 5 minuts
+            new = not os.path.exists(EQUITY)
+            with open(EQUITY, "a", encoding="utf-8") as f:
+                if new:
+                    f.write("ts,equity\n")
+                f.write(f"{now.isoformat()},{eq:.4f}\n")
+            self._last_equity_log = time.time()
+        for s in list(self.market):
+            if s not in self._symbols():
+                self.market.pop(s)
         save_json(STATUS, {
+            "en_marxa_des_de": self.started,
+            "capital_inicial_eur": cap,
+            "timeframe": self.cfg["timeframe"],
+            "mercat": self.market,
+            "config": {"estrategia": self.cfg["strategy"], "risc": self.cfg["risk"],
+                       "comissio_pct": self.cfg["paper"]["fee_pct"], "curts": self.cfg.get("allow_short", False)},
             "actualitzat": str(now),
             "mode": self.cfg["mode"],
             "capital_eur": round(eq, 2),
             "rendiment_total_pct": round((eq / cap - 1) * 100, 3),
             "efectiu_eur": round(t.cash, 2),
+            "rendiment_avui_pct": round((eq / t.day_start_equity - 1) * 100, 3) if t.day_start_equity else 0,
             "caiguda_des_del_maxim_pct": round((1 - eq / t.peak_equity) * 100, 2) if t.peak_equity else 0,
             "bloquejat_avui": t.day_blocked,
             "aturat_emergencia": t.halted,
             "operacions_tancades": len(t.trades),
             "posicions": {
-                s: {"costat": "llarg" if pos.side == 1 else "curt", "entrada": pos.entry,
+                s: {"costat": "llarg" if pos.side == 1 else "curt", "entrada": pos.entry, "obert": pos.entry_ts,
+                    "pnl_eur": round(pos.value(t.last_price.get(s, pos.entry)) - pos.collateral - pos.fee_in, 2),
                     "preu_actual": t.last_price.get(s), "stop": round(pos.stop, 6), "objectiu": round(pos.tp, 6),
                     "valor_eur": round(pos.value(t.last_price.get(s, pos.entry)), 2)}
                 for s, pos in t.positions.items()
