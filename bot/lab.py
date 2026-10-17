@@ -1,15 +1,17 @@
-"""Laboratori de proves: compara estratègies amb dades històriques REALS i sense trampes.
+"""Laboratori de proves v2: estratègies amb paràmetres FIXOS sobre ~5 anys de dades REALS.
 
-Mètode walk-forward:
-  1. Es descarreguen ~3,5 anys d'espelmes reals de Binance.
-  2. Per a cada trimestre dels últims 2 anys:
-       - s'escullen els millors paràmetres fent servir NOMÉS els 12 mesos anteriors;
-       - es proven aquests paràmetres en el trimestre següent, que l'optimització no ha vist.
-  3. S'encadenen els trimestres de prova: és el que hauria guanyat el bot de veritat
-     si hagués anat reajustant-se cada 3 mesos.
+Per què paràmetres fixos i no optimitzats?
+  A la v1, l'optimització trimestre a trimestre donava resultats molt diferents segons un
+  sol ajust (+47% o +13% amb la mateixa estratègia). És el senyal que els paràmetres
+  "guanyadors" ho eren per casualitat. Ara:
 
-L'estratègia guanyadora és la de més rendiment anual que NO supera la caiguda màxima
-que tu acceptes. Els paràmetres recomanats s'obtenen amb els 12 mesos més recents.
+  1. Cada estratègia es prova amb paràmetres senzills i fixats d'avançada, en UNA sola
+     execució contínua del 2021 al 2026 (inclou l'eufòria del 2021 i la caiguda del 2022).
+     L'aturada d'emergència funciona exactament com al bot real: si salta, no torna a entrar.
+  2. Prova de robustesa: la rotació es prova amb 24 combinacions de paràmetres. Si la majoria
+     guanyen diners, l'avantatge és real; si només en guanyen unes poques, és sort.
+  3. Mai es recomana una estratègia que perdi diners: si cap guanya sense passar de la
+     caiguda acceptada, el laboratori ho diu.
 """
 from __future__ import annotations
 
@@ -36,31 +38,32 @@ log = logging.getLogger("lab")
 STATUS_FILE = os.path.join(LAB_DIR, "estat.json")
 RESULTS_FILE = os.path.join(LAB_DIR, "resultats.json")
 
-TRAIN_MONTHS = 12
-TEST_MONTHS = 3
-N_WINDOWS = 8                     # 8 trimestres = 2 anys de prova fora de mostra
+HISTORY_DAYS = 2330               # ~6,4 anys d'espelmes: prova des de gener del 2021 + escalfament previ
 WARMUP_DAYS = 220                 # història prèvia per als indicadors (mitjana BTC de 200 dies, etc.)
 
-FAMILIES = [
-    {"id": "actual", "nom": "Estratègia actual", "desc": "La configuració que fa servir ara el bot, sense optimitzar.",
-     "tf": None, "base": {}, "grid": {}},
-    {"id": "retroces_4h", "nom": "Retrocés en tendència (4h)",
-     "desc": "La mateixa idea que l'actual, amb espelmes de 4 hores (menys operacions i comissions) i paràmetres optimitzats.",
-     "tf": "4h", "base": {"mode": "retroces", "btc_filter": False, "top_n": 0},
-     "grid": {"stop_atr": [1.5, 2.5], "take_profit_atr": [3.0, 5.0], "rsi_long": [35, 45], "ema_slow": [50, 100]}},
-    {"id": "retroces_filtres", "nom": "Retrocés + filtre BTC + els més forts (4h)",
-     "desc": "Només compra quan el Bitcoin és per sobre de la seva mitjana de 200 dies, i només els 4 valors amb més momentum.",
-     "tf": "4h", "base": {"mode": "retroces", "btc_filter": True, "top_n": 4},
-     "grid": {"stop_atr": [1.5, 2.5], "take_profit_atr": [3.0, 5.0], "momentum_days": [14, 30]}},
-    {"id": "rotacio", "nom": "Rotació dels més forts amb filtre BTC (4h)",
-     "desc": "Cada dia es queda amb els N valors que més han pujat les últimes setmanes. Si el Bitcoin és per sota de la seva mitjana de 200 dies, tot en efectiu.",
-     "tf": "4h", "base": {"mode": "rotacio", "btc_filter": True, "trail_activate_atr": 4.0, "trail_atr": 3.0},
-     "grid": {"momentum_days": [14, 30, 60], "top_n": [2, 4], "stop_atr": [3.0, 5.0]}},
+ROT_BASE = {"mode": "rotacio", "btc_filter": True, "top_n": 4, "momentum_days": 30,
+            "stop_atr": 4.0, "trail_activate_atr": 4.0, "trail_atr": 3.0, "exposure": 1.0}
+
+STRATEGIES = [
+    {"id": "actual", "nom": "Estratègia actual", "tf": None, "params": {},
+     "desc": "La configuració que fa servir ara el bot."},
+    {"id": "retroces_4h", "nom": "Retrocés en tendència (4h)", "tf": "4h",
+     "params": {"mode": "retroces", "btc_filter": False, "top_n": 0},
+     "desc": "La mateixa idea que l'actual, amb espelmes de 4 hores (menys operacions i comissions)."},
+    {"id": "rotacio_100", "nom": "Rotació dels 4 més forts, tot el capital", "tf": "4h", "params": dict(ROT_BASE),
+     "desc": "Cada dia a les 00:00 UTC es queda amb els 4 valors que més han pujat en 30 dies. "
+             "Si el Bitcoin és per sota de la seva mitjana de 200 dies, tot en efectiu."},
+    {"id": "rotacio_50", "nom": "Rotació dels 4 més forts, meitat del capital", "tf": "4h",
+     "params": {**ROT_BASE, "exposure": 0.5},
+     "desc": "La mateixa rotació, però només inverteix la meitat del capital: menys rendiment i menys caigudes."},
+    {"id": "rotacio_sense_filtre", "nom": "Rotació sense filtre BTC", "tf": "4h",
+     "params": {**ROT_BASE, "btc_filter": False},
+     "desc": "La rotació sense apartar-se quan el Bitcoin baixa. Serveix per veure què aporta el filtre."},
 ]
+GRID = {"momentum_days": [14, 30, 60], "top_n": [2, 3, 4, 6], "stop_atr": [3.0, 5.0]}
 IND_KEYS = ("ema_fast", "ema_slow", "rsi_period", "atr_period", "momentum_days")
 
 
-# ------------------------------------------------------------------ estat per al panell
 def write_status(**kw) -> None:
     os.makedirs(LAB_DIR, exist_ok=True)
     kw["actualitzat"] = datetime.now(timezone.utc).isoformat()
@@ -71,7 +74,6 @@ def write_status(**kw) -> None:
     os.replace(tmp, STATUS_FILE)
 
 
-# ------------------------------------------------------------------ mètriques
 def curve_stats(curve: pd.Series) -> dict:
     curve = curve.dropna()
     if len(curve) < 2 or curve.iloc[0] <= 0:
@@ -83,180 +85,185 @@ def curve_stats(curve: pd.Series) -> dict:
     return {"cagr": float(cagr), "dd": dd, "total": float(total)}
 
 
-def score(stats: dict, dd_limit: float) -> tuple:
-    """Ordre de preferència: primer les que respecten la caiguda màxima, i entre aquestes la de més rendiment."""
-    ok = stats["dd"] <= dd_limit
-    return (1, stats["cagr"]) if ok else (0, -stats["dd"])
+def yearly(curve: pd.Series) -> dict:
+    """Rendiment de cada any natural (el primer i l'últim, parcials)."""
+    if len(curve) < 2:
+        return {}
+    out = {}
+    for y, seg in curve.groupby(curve.index.year):
+        prev = curve[curve.index < seg.index[0]]
+        start = prev.iloc[-1] if len(prev) else seg.iloc[0]
+        out[str(y)] = round((seg.iloc[-1] / start - 1) * 100, 1)
+    return out
 
 
-# ------------------------------------------------------------------ laboratori
+def ser(curve: pd.Series) -> list:
+    return [[str(t), round(float(v), 2)] for t, v in bt._downsample_series(curve).items()]
+
+
 class Lab:
-    def __init__(self, cfg: dict, data_by_tf: dict, btc_by_tf: dict, dd_limit: float):
+    def __init__(self, cfg: dict, data: dict, btc: dict, dd_limit: float):
         self.base_cfg = cfg
-        self.data = data_by_tf          # {tf: {symbol: df}}
-        self.btc = btc_by_tf            # {tf: df}
+        self.data, self.btc = data, btc
         self.dd_limit = dd_limit
-        self._ind_cache: dict = {}
-        self.done = 0
-        self.total = 1
+        self._ind: dict = {}
+        self.done, self.total = 0, 1
+        self.started = datetime.now(timezone.utc).isoformat()
 
-    def cfg_for(self, fam: dict, params: dict) -> dict:
+    def cfg_for(self, tf: str | None, params: dict, kill_switch: bool = True) -> dict:
         c = copy.deepcopy(self.base_cfg)
-        c["timeframe"] = fam["tf"] or c["timeframe"]
-        c["strategy"].update(fam["base"])
+        c["timeframe"] = tf or c["timeframe"]
         c["strategy"].update(params)
-        c["risk"]["max_drawdown_pct"] = min(50.0, self.dd_limit * 100)   # el bot real s'aturaria aquí
+        # Coherent amb el bot real: l'aturada d'emergència a la caiguda que acceptes
+        c["risk"]["max_drawdown_pct"] = min(50.0, self.dd_limit * 100) if kill_switch else 99.0
         return c
 
     def indicators(self, cfg: dict) -> dict:
         p, tf = cfg["strategy"], cfg["timeframe"]
         key = (tf,) + tuple(p.get(k, 30) for k in IND_KEYS)
-        if key not in self._ind_cache:
+        if key not in self._ind:
             bpd = bars_per_day(tf)
-            self._ind_cache[key] = {s: add_indicators(df, p, bpd) for s, df in self.data[tf].items()}
-        return self._ind_cache[key]
+            self._ind[key] = {s: add_indicators(df, p, bpd) for s, df in self.data[tf].items()}
+        return self._ind[key]
 
-    def run_window(self, cfg: dict, start, end) -> tuple:
-        """Backtest de [start, end) amb escalfament previ. Retorna (trader, corba des de start)."""
-        tf = cfg["timeframe"]
-        w0 = start - pd.Timedelta(days=WARMUP_DAYS)
-        frames = {s: f.loc[w0:end - pd.Timedelta(seconds=1)] for s, f in self.indicators(cfg).items()}
-        frames = {s: f for s, f in frames.items() if len(f)}
-        btc = self.btc[tf].loc[:end - pd.Timedelta(seconds=1)]
+    def run_cfg(self, cfg: dict, start, end):
+        frames = {s: f.loc[start - pd.Timedelta(days=WARMUP_DAYS):end] for s, f in self.indicators(cfg).items()}
+        frames = {s: f for s, f in frames.items() if len(f) > 50}
+        btc = self.btc[cfg["timeframe"]].loc[:end]
         trader, curve = bt.run(cfg, {}, trade_from=start, btc=btc, indicators=frames)
         return trader, curve.loc[start:]
 
     def tick(self, msg: str) -> None:
         self.done += 1
-        if self.done % 3 == 0 or self.done == self.total:
-            write_status(estat="provant", pct=round(self.done / self.total * 100, 1), missatge=msg,
-                         inici=self.started)
+        write_status(estat="provant", pct=round(self.done / self.total * 100, 1), missatge=msg, inici=self.started)
 
-    def optimize(self, fam: dict, start, end, label: str) -> tuple[dict, dict]:
-        grid = fam["grid"]
-        combos = [dict(zip(grid, v)) for v in itertools.product(*grid.values())] if grid else [{}]
-        best, best_stats = None, None
-        for params in combos:
-            cfg = self.cfg_for(fam, params)
-            _, curve = self.run_window(cfg, start, end)
-            st = curve_stats(curve)
-            if best is None or score(st, self.dd_limit) > score(best_stats, self.dd_limit):
-                best, best_stats = params, st
-            self.tick(f"{fam['nom']}: {label}")
-        return best, best_stats
-
-    def evaluate(self, fam: dict, test_starts: list, end) -> dict:
-        equity, pieces, windows = 1000.0, [], []
-        trades, fees_pct = [], 0.0
-        for k, ts0 in enumerate(test_starts):
-            ts1 = test_starts[k + 1] if k + 1 < len(test_starts) else end
-            params, train_st = self.optimize(fam, ts0 - pd.DateOffset(months=TRAIN_MONTHS), ts0,
-                                             f"trimestre {k + 1} de {len(test_starts)}")
-            cfg = self.cfg_for(fam, params)
-            trader, curve = self.run_window(cfg, ts0, ts1)
-            self.tick(f"{fam['nom']}: trimestre {k + 1} de {len(test_starts)}")
-            if len(curve) < 2:
-                continue
-            seg = curve / curve.iloc[0] * equity
-            pieces.append(seg if not pieces else seg.iloc[1:])
-            equity = float(seg.iloc[-1])
-            trades.extend(trader.trades)
-            fees_pct += trader.fees_paid / self.base_cfg["paper"]["initial_capital"]
-            windows.append({"des_de": str(ts0.date()), "fins": str(ts1.date()), "parametres": params,
-                            "rendiment_pct": round((seg.iloc[-1] / seg.iloc[0] - 1) * 100, 2),
-                            "entrenament_rendiment_anual_pct": round(train_st["cagr"] * 100, 1),
-                            "entrenament_caiguda_pct": round(train_st["dd"] * 100, 1)})
-        oos = pd.concat(pieces) if pieces else pd.Series(dtype=float)
-        # Paràmetres recomanats per a ARA: optimitzats amb els 12 mesos més recents
-        rec, rec_st = self.optimize(fam, end - pd.DateOffset(months=TRAIN_MONTHS), end, "paràmetres per a ara")
-        st = curve_stats(oos)
-        years = max((oos.index[-1] - oos.index[0]).days / 365, 0.01) if len(oos) else 1
-        tdf = pd.DataFrame(trades)
-        daily = oos.resample("1D").last().pct_change().dropna() if len(oos) else pd.Series(dtype=float)
-        monthly = oos.resample("ME").last().pct_change().dropna() if len(oos) else pd.Series(dtype=float)
+    def evaluate(self, strat: dict, start, end) -> dict:
+        cfg = self.cfg_for(strat["tf"], strat["params"])
+        trader, curve = self.run_cfg(cfg, start, end)
+        self.tick(f"Provada: {strat['nom']}")
+        st = curve_stats(curve)
+        years = max((curve.index[-1] - curve.index[0]).days / 365, 0.01)
+        tdf = pd.DataFrame(trader.trades)
+        daily = curve.resample("1D").last().pct_change().dropna()
+        monthly = curve.resample("ME").last().pct_change().dropna()
+        halted_at = None
+        if trader.halted and len(tdf):
+            stops = tdf[tdf.reason == "aturada_emergencia"]
+            if len(stops):
+                halted_at = str(pd.Timestamp(stops.exit_ts.iloc[0]).date())
         return {
-            "id": fam["id"], "nom": fam["nom"], "desc": fam["desc"],
-            "temporalitat": fam["tf"] or self.base_cfg["timeframe"],
+            "id": strat["id"], "nom": strat["nom"], "desc": strat["desc"],
+            "temporalitat": cfg["timeframe"],
+            "parametres": strat["params"],
             "rendiment_anual_pct": round(st["cagr"] * 100, 1),
             "rendiment_total_pct": round(st["total"] * 100, 1),
             "caiguda_maxima_pct": round(st["dd"] * 100, 1),
-            "compleix_caiguda": st["dd"] <= self.dd_limit,
+            # Si l'aturada d'emergència salta, el bot real s'hauria quedat aturat: no compleix
+            "compleix_caiguda": st["dd"] <= self.dd_limit + 0.005 and not trader.halted,
+            "aturada_el": halted_at,
             "sharpe": round(float(daily.mean() / daily.std() * math.sqrt(365)), 2) if len(daily) > 5 and daily.std() > 0 else None,
             "operacions": len(tdf),
             "operacions_any": round(len(tdf) / years, 0),
             "guanyadores_pct": round(float((tdf.pnl_eur > 0).mean() * 100), 1) if len(tdf) else None,
-            "comissions_pct_any": round(fees_pct / years * 100, 1),
+            # comissions respecte del capital mitjà (si el capital creix, les comissions en euros també)
+            "comissions_pct_any": round(trader.fees_paid / float(curve.mean()) / years * 100, 1),
             "mesos_positius_pct": round(float((monthly > 0).mean() * 100), 0) if len(monthly) else None,
-            "finestres": windows,
-            "parametres_recomanats": {**fam["base"], **rec},
-            "recomanats_rendiment_anual_pct": round(rec_st["cagr"] * 100, 1),
-            "recomanats_caiguda_pct": round(rec_st["dd"] * 100, 1),
-            "corba": [[str(t), round(float(v), 2)] for t, v in bt._downsample_series(oos).items()],
+            "per_any": yearly(curve),
+            "corba": ser(curve),
         }
 
+    def robustness(self, start, end, btc_cagr: float) -> dict:
+        """Totes les combinacions de la rotació, sense aturada d'emergència: l'avantatge en brut."""
+        cells = []
+        for m, n, s in itertools.product(*GRID.values()):
+            params = {**ROT_BASE, "momentum_days": m, "top_n": n, "stop_atr": s}
+            cfg = self.cfg_for("4h", params, kill_switch=False)
+            _, curve = self.run_cfg(cfg, start, end)
+            st = curve_stats(curve)
+            cells.append({"momentum_days": m, "top_n": n, "stop_atr": s,
+                          "rendiment_anual_pct": round(st["cagr"] * 100, 1), "caiguda_maxima_pct": round(st["dd"] * 100, 1)})
+            self.tick(f"Prova de robustesa: momentum {m} dies, {n} valors, stop {s:g} ATR")
+        cagrs = np.array([c["rendiment_anual_pct"] for c in cells])
+        pos = int((cagrs > 0).sum())
+        beat = int((cagrs > btc_cagr * 100).sum())
+        share = pos / len(cells)
+        if share >= 0.75 and np.median(cagrs) > 0:
+            verdict, txt = "robusta", "Avantatge sòlid: la gran majoria de combinacions guanyen diners."
+        elif share >= 0.5:
+            verdict, txt = "fragil", "Avantatge feble: el resultat depèn molt dels paràmetres que triïs."
+        else:
+            verdict, txt = "sense_avantatge", "Sense avantatge clar: la majoria de combinacions no guanyen diners."
+        return {"combinacions": cells, "total": len(cells), "positives": pos, "baten_btc": beat,
+                "mediana_anual_pct": round(float(np.median(cagrs)), 1),
+                "mediana_caiguda_pct": round(float(np.median([c["caiguda_maxima_pct"] for c in cells])), 1),
+                "millor_anual_pct": round(float(cagrs.max()), 1), "pitjor_anual_pct": round(float(cagrs.min()), 1),
+                "veredicte": verdict, "text": txt}
+
     def run(self) -> dict:
-        self.started = datetime.now(timezone.utc).isoformat()
-        any_tf = next(iter(self.data))
-        end = max(df.index[-1] for df in self.data[any_tf].values()).floor("D")
-        test_starts = [end - pd.DateOffset(months=TEST_MONTHS * (N_WINDOWS - k)) for k in range(N_WINDOWS)]
-        sizes = [max(1, len(list(itertools.product(*f["grid"].values())))) if f["grid"] else 1 for f in FAMILIES]
-        self.total = sum(s * (N_WINDOWS + 1) + N_WINDOWS for s in sizes)
-        results = [self.evaluate(f, test_starts, end) for f in FAMILIES]
+        tf4 = self.data["4h"]
+        first = max(min(df.index[0] for df in tf4.values()), self.btc["4h"].index[0])
+        start = (first + pd.Timedelta(days=WARMUP_DAYS)).ceil("D")
+        end = max(df.index[-1] for df in tf4.values())
+        self.total = len(STRATEGIES) + int(np.prod([len(v) for v in GRID.values()]))
 
-        # Referències: comprar i mantenir durant el mateix període de prova
-        t0 = test_starts[0]
-        bench = {}
-        btc = self.btc["4h"].loc[t0:end]["close"]
-        bench["btc"] = btc / btc.iloc[0] * 1000
-        closes = pd.concat({s: df.loc[t0:end]["close"] for s, df in self.data["4h"].items()}, axis=1).ffill().bfill()
-        bench["cartera"] = (closes / closes.iloc[0]).mean(axis=1) * 1000
+        results = [self.evaluate(s, start, end) for s in STRATEGIES]
+
+        btc = self.btc["4h"].loc[start:end]["close"]
+        btc_curve = btc / btc.iloc[0] * 1000
+        closes = pd.concat({s: df.loc[start:end]["close"] for s, df in tf4.items()}, axis=1)
+        rets = closes.pct_change().mean(axis=1, skipna=True).fillna(0)   # els valors nous entren quan cotitzen
+        basket = (1 + rets).cumprod() * 1000
         refs = []
-        for k, nom in (("btc", "Comprar Bitcoin i no tocar res"), ("cartera", "Comprar els 12 valors a parts iguals i no tocar res")):
-            st = curve_stats(bench[k])
+        for k, nom, c in (("btc", "Comprar Bitcoin i no tocar res", btc_curve),
+                          ("cartera", "Comprar els 12 valors a parts iguals i no tocar res", basket)):
+            st = curve_stats(c)
             refs.append({"id": k, "nom": nom, "rendiment_anual_pct": round(st["cagr"] * 100, 1),
-                         "caiguda_maxima_pct": round(st["dd"] * 100, 1),
-                         "corba": [[str(t), round(float(v), 2)] for t, v in bt._downsample_series(bench[k]).items()]})
+                         "caiguda_maxima_pct": round(st["dd"] * 100, 1), "per_any": yearly(c), "corba": ser(c)})
+        btc_cagr = curve_stats(btc_curve)["cagr"]
 
-        ok = [r for r in results if r["compleix_caiguda"] and r["operacions"] > 0]
-        best = max(ok, key=lambda r: r["rendiment_anual_pct"]) if ok else min(results, key=lambda r: r["caiguda_maxima_pct"])
+        robust = self.robustness(start, end, btc_cagr)
+
+        candidates = [r for r in results if r["rendiment_anual_pct"] > 0 and r["compleix_caiguda"] and r["operacions"] > 0]
+        best = max(candidates, key=lambda r: r["rendiment_anual_pct"]) if candidates else None
         return {
+            "versio": 2,
             "generat": datetime.now(timezone.utc).isoformat(),
-            "periode_prova": {"des_de": str(t0.date()), "fins": str(end.date())},
+            "periode_prova": {"des_de": str(start.date()), "fins": str(end.date())},
             "caiguda_maxima_acceptada_pct": round(self.dd_limit * 100),
             "comissio_pct": self.base_cfg["paper"]["fee_pct"],
             "estrategies": results,
             "referencies": refs,
-            "recomanada": best["id"],
-            "recomanada_compleix": bool(ok),
+            "robustesa": robust,
+            "recomanada": best["id"] if best else None,
         }
 
 
 def load_data(cfg: dict, synthetic: bool = False) -> tuple[dict, dict]:
-    days = (TRAIN_MONTHS + TEST_MONTHS * N_WINDOWS) * 31 + WARMUP_DAYS
-    tfs = sorted({f["tf"] or cfg["timeframe"] for f in FAMILIES})
+    tfs = sorted({s["tf"] or cfg["timeframe"] for s in STRATEGIES})
     symbols = list(cfg["symbols"])
     data, btc = {}, {}
     if synthetic:
         import run_backtest as rb
         for tf in tfs:
-            d = rb.synthetic(list(dict.fromkeys(symbols + ["BTC/EUR"])), tf, days, seed=3)
+            d = rb.synthetic(list(dict.fromkeys(symbols + ["BTC/EUR"])), tf, HISTORY_DAYS, seed=3)
             btc[tf] = d["BTC/EUR"]
             data[tf] = {s: d[s] for s in symbols}
         return data, btc
+    cache = os.path.join(LAB_DIR, "dades")
     n, total = 0, len(tfs) * len(symbols)
     for tf in tfs:
         data[tf] = {}
         for s in symbols:
             write_status(estat="descarregant", pct=round(n / total * 100, 1),
-                         missatge=f"Descarregant 3,5 anys d'espelmes de {s} ({tf})")
+                         missatge=f"Descarregant ~6 anys d'espelmes reals de {s} ({tf})")
             try:
-                data[tf][s] = fetch_history(s, tf, days, cache_dir=os.path.join(LAB_DIR, "dades"), quote="USDT")
+                data[tf][s] = fetch_history(s, tf, HISTORY_DAYS, cache_dir=cache, quote="USDT")
             except Exception as e:
                 log.warning("Salto %s (%s): %s", s, tf, e)
             n += 1
         btc[tf] = data[tf].get("BTC/EUR")
         if btc[tf] is None:
-            btc[tf] = fetch_history("BTC/EUR", tf, days, cache_dir=os.path.join(LAB_DIR, "dades"), quote="USDT")
+            btc[tf] = fetch_history("BTC/EUR", tf, HISTORY_DAYS, cache_dir=cache, quote="USDT")
     return data, btc
 
 
@@ -266,8 +273,7 @@ def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False) -> dict:
     write_status(estat="descarregant", pct=0, missatge="Preparant la descàrrega de dades")
     try:
         data, btc = load_data(cfg, synthetic)
-        lab = Lab(cfg, data, btc, dd_limit_pct / 100)
-        res = lab.run()
+        res = Lab(cfg, data, btc, dd_limit_pct / 100).run()
         res["durada_min"] = round((time.time() - t0) / 60, 1)
         res["dades_sintetiques"] = synthetic
         tmp = RESULTS_FILE + ".tmp"

@@ -162,6 +162,17 @@ select{font:inherit;color:var(--ink);background:var(--panel);border:1.5px solid 
 .legend i{width:14px;height:3px;border-radius:2px;display:inline-block}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--panel);
   padding:10px 16px;border-radius:8px;font-size:.92rem;max-width:min(92vw,520px);display:none;z-index:9}
+.lab-h3{font-family:"Barlow Semi Condensed",sans-serif;font-weight:600;font-size:1.1rem;margin:18px 0 4px}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.cmp.years td,.cmp.years th{white-space:nowrap}
+.cmp.years td:first-child{white-space:normal;min-width:9rem}
+.verdict{font-weight:600;margin:.2rem 0}
+.verdict.robusta{color:var(--gain)} .verdict.fragil{color:var(--amber)} .verdict.sense_avantatge{color:var(--loss)}
+.heat{border-collapse:separate;border-spacing:3px;font-size:.88rem;margin-top:6px}
+.heat th{font-weight:500;color:var(--muted);padding:2px 6px;text-align:center;white-space:nowrap}
+.heat tbody th{text-align:right}
+.heat td{border-radius:5px;padding:7px 10px;text-align:center;min-width:5.2rem;color:var(--ink)}
+.heat td b{display:block;font-weight:600} .heat td small{color:var(--ink);opacity:.75}
 @media (max-width:640px){.cmp .hide-s{display:none}}
 footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
 </style>
@@ -414,7 +425,7 @@ load(); setInterval(load,30000);
 setInterval(()=>{ const a=$("ago"); if(a&&data) a.textContent=ago(data.status.actualitzat); },1000);
 
 /* ---------------- laboratori ---------------- */
-const LAB_COLORS = {actual:"#8A97A5", retroces_4h:"#1C7A72", retroces_filtres:"#7A3E8E", rotacio:"#A0661A"};
+const LAB_COLORS = {actual:"#8A97A5", retroces_4h:"#1C7A72", rotacio_100:"#A0661A", rotacio_50:"#2457A6", rotacio_sense_filtre:"#7A3E8E"};
 let lab = null, labTimer = null;
 function toast(msg){ const t=$("toast"); t.textContent=msg; t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none",4500); }
 async function post(path, body){
@@ -450,6 +461,9 @@ function paramText(p){
     ema_slow:v=>`Tendència amb EMA de ${v}`,trail_activate_atr:v=>`Stop dinàmic des de ${v} × ATR`,trail_atr:v=>`a ${v} × ATR`};
   return Object.entries(p||{}).filter(([k])=>L[k]).map(([k,v])=>L[k](v)).join(", ");
 }
+function labIntro(){
+  return `<p>Prova diverses estratègies amb uns 6 anys d'espelmes reals de Binance: del gener del 2021 fins avui, amb l'eufòria del 2021 i la gran caiguda del 2022. Cada estratègia fa servir paràmetres fixos i una sola execució contínua, com si el bot hagués funcionat tot aquest temps, amb l'aturada d'emergència a la caiguda que triïs. A més, prova la rotació amb 24 combinacions de paràmetres per veure si l'avantatge és real o sort. Tarda uns 10-15 minuts.</p>`;
+}
 function renderLab(){
   const body=$("lab-body"); if(!lab) return;
   const st=lab.estat||{}, res=lab.resultats, ap=lab.aplicada;
@@ -461,57 +475,80 @@ function renderLab(){
       <p>${fmtNum(st.pct||0,0)} % fet. Sol trigar uns 10-15 minuts. Pots tancar el panell: la prova continua i els resultats apareixeran aquí.</p>`;
     return;
   }
-  const intro = `<p>Prova 4 estratègies amb uns 3 anys i mig d'espelmes reals de Binance. Per a cada trimestre dels últims 2 anys, tria els paràmetres amb els 12 mesos anteriors i els prova en el trimestre següent, que no ha vist mai. És el més semblant a haver tingut el bot funcionant tot aquest temps. Tarda uns 10-15 minuts.</p>`;
   const errMsg = (st.estat==="error"||st.estat==="interrompuda") ? `<p class="warn">${esc(st.missatge)}</p>` : "";
-  if(!res){
-    body.innerHTML = intro + errMsg + `<div class="controls">${ddSelect()}<button class="btn" id="lab-go" onclick="startLab()">Fes la prova</button></div>`;
+  if(!res || res.versio!==2){
+    body.innerHTML = labIntro() + errMsg + (res ? `<p class="warn">Els resultats guardats són de la versió anterior del laboratori. Torna a fer la prova.</p>` : "")
+      + `<div class="controls">${ddSelect(res&&res.caiguda_maxima_acceptada_pct)}<button class="btn" id="lab-go" onclick="startLab()">Fes la prova</button></div>`;
     return;
   }
-  const all=res.estrategies, best=all.find(s=>s.id===res.recomanada), appliedId=ap?._origen?.id;
+  const all=res.estrategies, best=all.find(s=>s.id===res.recomanada), appliedId=ap?._origen?.id, lim=res.caiguda_maxima_acceptada_pct;
   const per=`${monthYear(res.periode_prova.des_de)} – ${monthYear(res.periode_prova.fins)}`;
   const synth = res.dades_sintetiques ? `<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>` : "";
-  const bestBox = `<div class="winner">
-      <div class="sub" style="margin:0">${res.recomanada_compleix?`La de més rendiment sense passar del ${res.caiguda_maxima_acceptada_pct} % de caiguda`:`Cap estratègia es queda per sota del ${res.caiguda_maxima_acceptada_pct} % de caiguda. Aquesta és la que cau menys`}</div>
+  const applyBtn = s => appliedId===s.id ? `<span class="applied">Aplicada al bot</span> <button class="btn ghost" onclick="resetStrat()">Torna a la configuració de GitHub</button>`
+      : s.id==="actual" ? `<span class="sub">És la que ja fa servir el bot.</span>`
+      : s.rendiment_anual_pct>0 ? `<button class="btn" onclick="applyStrat('${s.id}')">Aplica-la al bot (simulació)</button>` : "";
+  const stopNote = s => s.aturada_el ? `<div class="sub" style="margin:4px 0 0">L'aturada d'emergència (${lim} %) va saltar el ${new Date(s.aturada_el).toLocaleDateString("ca-ES",{day:"numeric",month:"short",year:"numeric"})}: a partir d'aquí el bot real s'hauria quedat aturat.</div>` : "";
+  const bestBox = best ? `<div class="winner">
+      <div class="sub" style="margin:0">La de més rendiment que guanya diners sense passar del ${lim} % de caiguda</div>
       <h3>${esc(best.nom)}</h3>
       <div class="nums"><span>Rendiment anual<b class="${sign(best.rendiment_anual_pct)}">${fmtP(best.rendiment_anual_pct)}</b></span>
         <span>Caiguda màxima<b>${fmtNum(best.caiguda_maxima_pct,1)} %</b></span>
         <span>Operacions a l'any<b>${fmtNum(best.operacions_any,0)}</b></span>
         <span>Mesos positius<b>${best.mesos_positius_pct==null?"—":fmtNum(best.mesos_positius_pct,0)+" %"}</b></span></div>
-      <div class="sub" style="margin:0 0 10px">Paràmetres per a ara (ajustats amb els últims 12 mesos): ${esc(paramText(best.parametres_recomanats)||"els actuals")}.</div>
-      ${appliedId===best.id ? `<span class="applied">Aplicada al bot</span> <button class="btn ghost" onclick="resetStrat()">Torna a la configuració de GitHub</button>`
-        : best.id==="actual" ? `<span class="sub">És la que ja fa servir el bot.</span>`
-        : `<button class="btn" onclick="applyStrat('${best.id}')">Aplica-la al bot (simulació)</button>`}
-    </div>`;
+      <div class="sub" style="margin:0 0 10px">${esc(best.desc)}</div>${stopNote(best)}
+      <div style="margin-top:10px">${applyBtn(best)}</div></div>`
+    : `<div class="winner" style="border-color:var(--amber)"><h3>Cap estratègia guanya diners sense passar del ${lim} % de caiguda</h3>
+      <div class="sub" style="margin:0">El més prudent és no aplicar-ne cap. Pots tornar a fer la prova amb un altre límit de caiguda per veure què canvia.</div></div>`;
+  const rb=res.robustesa;
+  const years=[...new Set([...all,...res.referencies].flatMap(s=>Object.keys(s.per_any||{})))].sort();
+  const yearRows=[...all.map(s=>({s,ref:false})),...res.referencies.map(s=>({s,ref:true}))].map(({s,ref})=>
+    `<tr class="${ref?"ref":""}"><td>${esc(s.nom.replace(" i no tocar res",""))}</td>${years.map(y=>{const v=s.per_any?.[y]; return `<td class="${v==null?"":sign(v)}">${v==null?"—":pct(v,0)}</td>`;}).join("")}</tr>`).join("");
   const rows = all.map(s=>`<tr><td><details><summary><span class="sw" style="background:${LAB_COLORS[s.id]||"var(--line)"}"></span>${esc(s.nom)}</summary>
-        <div class="more-info">${esc(s.desc)}<br>Paràmetres per a ara: ${esc(paramText(s.parametres_recomanats)||"els actuals")}.<br>
-        Per trimestres: ${s.finestres.map(w=>`${monthYear(w.des_de)} ${pct(w.rendiment_pct,1)}`).join(", ")}.<br>
-        ${s.id!=="actual" && appliedId!==s.id ? `<button class="btn ghost" style="margin-top:6px" onclick="applyStrat('${s.id}')">Aplica aquesta</button>`:""}
-        ${appliedId===s.id?'<span class="applied">Aplicada al bot</span>':""}</div></details></td>
+        <div class="more-info">${esc(s.desc)}${stopNote(s)}<br>${s.operacions} operacions, ${s.guanyadores_pct==null?"—":fmtNum(s.guanyadores_pct,0)+" %"} guanyadores.
+        ${s.id!=="actual" && appliedId!==s.id && s.rendiment_anual_pct>0 ? `<br><button class="btn ghost" style="margin-top:6px" onclick="applyStrat('${s.id}')">Aplica aquesta</button>`:""}
+        ${appliedId===s.id?'<br><span class="applied">Aplicada al bot</span>':""}</div></details></td>
       <td class="${sign(s.rendiment_anual_pct)}">${fmtP(s.rendiment_anual_pct)}</td>
       <td>${fmtNum(s.caiguda_maxima_pct,1)} %${s.compleix_caiguda?"":' <span class="warn" title="Supera el límit">!</span>'}</td>
       <td class="hide-s">${fmtNum(s.operacions_any,0)}</td><td class="hide-s">${fmtNum(s.comissions_pct_any,1)} %</td></tr>`).join("")
     + res.referencies.map(r=>`<tr class="ref"><td><span class="sw" style="background:var(--muted)"></span>${esc(r.nom)}</td>
       <td>${fmtP(r.rendiment_anual_pct)}</td><td>${fmtNum(r.caiguda_maxima_pct,1)} %</td><td class="hide-s">—</td><td class="hide-s">—</td></tr>`).join("");
-  body.innerHTML = synth + errMsg + `<p>Resultats fora de mostra de ${per}, amb comissions del ${fmtNum(res.comissio_pct,2)} % per operació. Rendiments passats no garanteixen els futurs.</p>`
+  body.innerHTML = synth + errMsg + `<p>Prova de ${per}, amb comissions del ${fmtNum(res.comissio_pct,2)} % per operació i l'aturada d'emergència al ${lim} %. Rendiments passats no garanteixen els futurs.</p>`
     + bestBox
     + `<div class="legend" id="lab-legend"></div><div id="labchart"></div>
       <table class="cmp"><thead><tr><th>Estratègia</th><th>Anual</th><th>Caiguda màx.</th><th class="hide-s">Operacions/any</th><th class="hide-s">Comissions/any</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="controls" style="margin-top:14px">${ddSelect(res.caiguda_maxima_acceptada_pct)}<button class="btn ghost" id="lab-go" onclick="startLab()">Torna a fer la prova</button></div>`;
+      <h3 class="lab-h3">Any per any</h3>
+      <div class="scroll"><table class="cmp years"><thead><tr><th>Estratègia</th>${years.map(y=>`<th>${y}</th>`).join("")}</tr></thead><tbody>${yearRows}</tbody></table></div>
+      <h3 class="lab-h3">Prova de robustesa de la rotació</h3>
+      <p class="verdict ${rb.veredicte}">${esc(rb.text)}</p>
+      <p>${rb.positives} de ${rb.total} combinacions de paràmetres guanyen diners, i ${rb.baten_btc} baten comprar Bitcoin. Rendiment anual mitjà: ${fmtP(rb.mediana_anual_pct)} (entre ${fmtP(rb.pitjor_anual_pct)} i ${fmtP(rb.millor_anual_pct)}), amb una caiguda típica del ${fmtNum(rb.mediana_caiguda_pct,0)} %. Aquí no hi ha aturada d'emergència, per veure l'estratègia en brut.</p>
+      ${heatmap(rb)}
+      <div class="controls" style="margin-top:14px">${ddSelect(lim)}<button class="btn ghost" id="lab-go" onclick="startLab()">Torna a fer la prova</button></div>`;
   renderLabChart(res);
+}
+function heatmap(rb){
+  const ms=[...new Set(rb.combinacions.map(c=>c.momentum_days))].sort((a,b)=>a-b), ns=[...new Set(rb.combinacions.map(c=>c.top_n))].sort((a,b)=>a-b);
+  const cell=(m,n)=>{ const cs=rb.combinacions.filter(c=>c.momentum_days===m&&c.top_n===n); const v=cs.reduce((a,c)=>a+c.rendiment_anual_pct,0)/cs.length;
+    const dd=cs.reduce((a,c)=>a+c.caiguda_maxima_pct,0)/cs.length; const a=Math.min(1,Math.abs(v)/60)*.55+.12;
+    const bg=v>0?`rgba(34,165,91,${a})`:`rgba(217,58,47,${a})`;
+    return `<td style="background:${bg}" title="Caiguda màxima mitjana ${fmtNum(dd,0)} %"><b>${pct(v,0)}</b><small>caiguda ${fmtNum(dd,0)} %</small></td>`; };
+  return `<div class="scroll"><table class="heat"><thead><tr><th>Momentum</th>${ns.map(n=>`<th>${n} valors</th>`).join("")}</tr></thead><tbody>
+    ${ms.map(m=>`<tr><th>${m} dies</th>${ns.map(n=>cell(m,n)).join("")}</tr>`).join("")}</tbody></table></div>
+    <p class="note">Cada casella és el rendiment anual mitjà amb stops de 3 i 5 × ATR. Verd guanya, vermell perd.</p>`;
 }
 function renderLabChart(res){
   const box=$("labchart"); if(!box) return;
   const series=[...res.estrategies.map(s=>({id:s.id,nom:s.nom,c:LAB_COLORS[s.id]||"#2457A6",pts:s.corba,w:s.id===res.recomanada?2.6:1.6})),
     ...res.referencies.map(r=>({id:r.id,nom:r.nom,c:"var(--muted)",pts:r.corba,w:1.2,dash:r.id==="btc"?"5 4":"2 3"}))].filter(s=>s.pts&&s.pts.length>1);
   if(!series.length){ box.innerHTML=""; return; }
-  const W=box.clientWidth||700,H=box.clientHeight||230,pl=40,pr=8,pt=8,pb=20;
+  const W=box.clientWidth||700,H=box.clientHeight||230,pl=46,pr=8,pt=8,pb=20;
   const allT=series.flatMap(s=>s.pts.map(p=>new Date(p[0]).getTime())), allV=series.flatMap(s=>s.pts.map(p=>p[1])).filter(v=>v>0);
   const t0=Math.min(...allT),t1=Math.max(...allT); let lo=Math.log(Math.min(...allV)),hi=Math.log(Math.max(...allV)); if(hi-lo<0.05){hi+=0.05;lo-=0.05;}
   const X=t=>pl+(t-t0)/(t1-t0||1)*(W-pl-pr), Y=v=>pt+(hi-Math.log(Math.max(v,1e-9)))/(hi-lo)*(H-pt-pb);
-  const ticks=[]; [125,250,500,1000,2000,4000,8000,16000,32000,64000].forEach(v=>{const l=Math.log(v); if(l>=lo&&l<=hi) ticks.push(v);});
+  const ticks=[]; const fs=[2,4,10,100,1000,1e4]; let f=fs.find(f=>(hi-lo)/Math.log(f)<=5)||1e6;
+  for(let k=-6;k<=12;k++){ const v=1000*Math.pow(f,k); const l=Math.log(v); if(l>=lo&&l<=hi) ticks.push(v); }
   box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Evolució de 1.000 euros amb cada estratègia">
     ${ticks.map(v=>`<line x1="${pl}" x2="${W-pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--rule)" stroke-width="1" ${v===1000?'stroke-dasharray="3 3"':""}/>
-      <text x="${pl-6}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${v>=1000?fmtNum(v/1000,v%1000?1:0)+" k":v}</text>`).join("")}
+      <text x="${pl-6}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${v>=1e6?fmtNum(v/1e6,0)+" M":v>=1000?fmtNum(v/1000,v%1000?1:0)+" k":fmtNum(v,0)}</text>`).join("")}
     ${series.map(s=>`<path d="${s.pts.map((p,i)=>(i?"L":"M")+X(new Date(p[0]).getTime()).toFixed(1)+" "+Y(p[1]).toFixed(1)).join(" ")}" fill="none" stroke="${s.c}"
       stroke-width="${s.w}" ${s.dash?`stroke-dasharray="${s.dash}"`:""} stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`).join("")}
     <text x="${pl}" y="${H-4}" font-size="11" fill="var(--muted)">${monthYear(t0)}</text><text x="${W-pr}" y="${H-4}" font-size="11" fill="var(--muted)" text-anchor="end">${monthYear(t1)}</text>

@@ -44,6 +44,7 @@ strategy:
   btc_ma_days: 200
   top_n: 0                  # 0 = opera tots els valors · N = només els N amb més momentum
   momentum_days: 30         # finestra per mesurar el momentum (rendiment dels últims N dies)
+  exposure: 1.0             # rotació: part del capital invertida (1.0 = tot, 0.5 = la meitat; regula el risc)
   ema_fast: 20
   ema_slow: 100
   rsi_period: 14

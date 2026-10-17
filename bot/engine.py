@@ -69,7 +69,7 @@ class Engine:
     def _update_regime(self) -> None:
         """Filtre de mercat: BTC per sobre de la seva mitjana de N dies (es revisa cada hora)."""
         p = self.cfg["strategy"]
-        if not (p.get("btc_filter") or p.get("mode") == "rotacio"):
+        if not p.get("btc_filter"):
             self.trader.risk_on = True
             return
         if time.time() - self._regime_checked < 3600:
@@ -157,7 +157,7 @@ class Engine:
         for s, m in self.market.items():
             mom = moms.get(s)
             mtxt = "" if mom is None or pd.isna(mom) else f"{mom * 100:+.1f}% en {p.get('momentum_days', 30)} dies"
-            if (p.get("btc_filter") or mode == "rotacio") and not self.trader.risk_on:
+            if p.get("btc_filter") and not self.trader.risk_on:
                 m["estat"], m["explicacio"] = "filtre", f"Mercat desfavorable (BTC per sota de la mitjana de {ma} dies): no es compra"
             elif mode == "rotacio":
                 k = ranking.index(s) + 1 if s in ranking else None

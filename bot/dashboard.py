@@ -131,9 +131,11 @@ def lab_apply(strategy_id: str) -> tuple[int, str]:
         return 404, "No trobo aquesta estratègia als resultats."
     if strategy_id == "actual":
         return lab_reset()
+    if strat.get("rendiment_anual_pct", 0) <= 0:
+        return 400, "Aquesta estratègia perd diners a la prova: no l'aplico."
     override = {
         "timeframe": strat["temporalitat"],
-        "strategy": strat["parametres_recomanats"],
+        "strategy": strat.get("parametres") or strat.get("parametres_recomanats") or {},
         "risk": {"max_drawdown_pct": float(res.get("caiguda_maxima_acceptada_pct", 25))},
         "_origen": {"id": strategy_id, "nom": strat["nom"], "aplicada": datetime.now(timezone.utc).isoformat(),
                     "prova": res.get("generat")},

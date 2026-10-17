@@ -37,7 +37,7 @@ def run(cfg: dict, data: dict[str, pd.DataFrame], trade_from=None, btc: pd.DataF
     wu = warmup_bars(p, bpd)
     mode = p.get("mode", "retroces")
     top_n = int(p.get("top_n", 0) or 0)
-    use_regime = bool(p.get("btc_filter")) or mode == "rotacio"
+    use_regime = bool(p.get("btc_filter"))
 
     frames = indicators if indicators is not None else {s: add_indicators(df, p, bpd) for s, df in data.items()}
     frames = {s: f for s, f in frames.items() if len(f) > wu}

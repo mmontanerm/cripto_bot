@@ -33,6 +33,8 @@ def validate(cfg: dict) -> None:
     s, r = cfg["strategy"], cfg["risk"]
     if s.get("mode", "retroces") not in ("retroces", "rotacio"):
         raise ValueError("strategy.mode ha de ser 'retroces' o 'rotacio'")
+    if not 0 < float(s.get("exposure", 1.0)) <= 1:
+        raise ValueError("strategy.exposure ha d'estar entre 0 i 1 (1 = tot el capital)")
     if int(s.get("top_n", 0) or 0) < 0:
         raise ValueError("strategy.top_n no pot ser negatiu")
     bpd = 1440 / {"15m": 15, "30m": 30, "1h": 60, "4h": 240}[cfg["timeframe"]]

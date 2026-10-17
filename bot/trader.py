@@ -241,7 +241,8 @@ class Trader:
         if self.halted or self.day_blocked or not targets:
             return
         n = max(1, int(self.cfg["strategy"].get("top_n", 3)))
-        weight = self.equity() / n * 0.98
+        exposure = float(self.cfg["strategy"].get("exposure", 1.0))   # regulador de risc: 1.0 = tot el capital
+        weight = self.equity() * exposure / n * 0.98
         for s in targets:
             if s in self.positions or s not in self.last_price or not atrs.get(s) or self._in_cooldown(s, ts):
                 continue

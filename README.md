@@ -103,12 +103,15 @@ En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 
 Al panell hi ha el **Laboratori de proves**. Tries la caiguda màxima que acceptes (15, 25 o 35%) i prems **Fes la prova**. En uns 10-15 minuts:
 
-1. Descarrega uns 3 anys i mig d'espelmes reals de Binance (parells en USDT, que tenen més històric i liquiditat).
-2. Prova 4 estratègies: l'actual, el retrocés amb espelmes de 4 h, el retrocés amb filtre BTC i rànquing de momentum, i la rotació dels més forts amb filtre BTC.
-3. Fa servir el mètode **walk-forward**: per a cada trimestre dels últims 2 anys, tria els paràmetres amb els 12 mesos anteriors i els prova en el trimestre següent, que no ha vist mai.
-4. Les compara amb comprar Bitcoin, o els 12 valors, i no tocar res.
+1. Descarrega uns 6 anys d'espelmes reals de Binance (parells en USDT) i simula des del gener del 2021 fins avui, amb l'eufòria del 2021 i la caiguda del 2022.
+2. Prova cada estratègia amb **paràmetres fixos** en una sola execució contínua, amb l'aturada d'emergència a la caiguda triada, igual que el bot real: si salta, no torna a entrar.
+   - Estratègia actual i retrocés de 4 h.
+   - Rotació dels 4 més forts amb filtre BTC, amb tot el capital i amb la meitat (el **regulador de risc**, paràmetre `exposure`).
+   - Rotació sense filtre BTC, per veure què aporta el filtre.
+3. Mostra el rendiment **any per any** i el compara amb comprar Bitcoin, o els 12 valors, i no tocar res.
+4. **Prova de robustesa:** prova la rotació amb 24 combinacions de paràmetres. Si la majoria guanyen diners, l'avantatge és real; si no, és sort.
 
-La recomanada és la de més rendiment anual que no passa de la caiguda que has triat. Amb **Aplica-la al bot (simulació)**, el bot comença a fer-la servir en menys d'un minut. Els ajustos es desen al disc de Render (`state/config_lab.yaml`) i tenen prioritat sobre `config.yaml`. **Torna a la configuració de GitHub** els retira.
+La recomanada és la de més rendiment que **guanya diners**, no passa de la caiguda triada i no fa saltar l'aturada d'emergència. Si cap ho compleix, el laboratori ho diu i no en recomana cap. Amb **Aplica-la al bot (simulació)**, el bot comença a fer-la servir en menys d'un minut (`state/config_lab.yaml`, amb prioritat sobre `config.yaml`). **Torna a la configuració de GitHub** retira els ajustos.
 
 En local: `python run_lab.py --dd 25`.
 
