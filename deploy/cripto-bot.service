@@ -1,0 +1,16 @@
+# Servei systemd per tenir el bot 24/7 en un servidor Linux (VPS o Raspberry Pi).
+# Canvia USUARI i la ruta si cal. Instal·lació: veure README.md
+[Unit]
+Description=Cripto-bot (mode simulacio)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=USUARI
+WorkingDirectory=/home/USUARI/cripto-bot
+ExecStart=/home/USUARI/cripto-bot/.venv/bin/python run_bot.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

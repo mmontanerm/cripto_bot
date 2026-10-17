@@ -1,0 +1,9 @@
+# Fitxers que es generen en executar el bot: no es pugen a GitHub
+state/
+logs/
+results/
+data/
+__pycache__/
+*.pyc
+.venv/
+.env
