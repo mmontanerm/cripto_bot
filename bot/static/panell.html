@@ -234,6 +234,12 @@ footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
     <div id="lc-body"><p>Carregant…</p></div>
   </section>
 
+
+  <section class="lab" id="lab-ct">
+    <div class="lab-head"><h2>Laboratori de curt termini (5 minuts)</h2><span class="state" id="ct-when"></span></div>
+    <div id="ct-body"><p>Carregant…</p></div>
+  </section>
+
   <div class="grid">
     <div class="col">
       <section>
@@ -671,7 +677,64 @@ async function loadLC(){
 }
 loadLC(); setInterval(()=>{ if(!(lc&&["descarregant","provant"].includes(lc.estat?.estat))) loadLC(); },60000);
 
-let rz; addEventListener("resize",()=>{clearTimeout(rz); rz=setTimeout(()=>{ data&&renderChart(data.equity,data.status.capital_inicial_eur); lab&&lab.resultats&&renderLabChart(lab.resultats); lc&&lc.resultats&&renderLC(); },150);});
+/* ---------------- laboratori de curt termini ---------------- */
+const CT_COLORS={reversio:"#1C7A72", ruptura:"#A0661A", graella:"#7A3E8E"};
+let ct=null, ctTimer=null;
+async function startCT(){
+  const b=$("ct-go"); if(b) b.disabled=true;
+  try{ await post("api/lab/start",{dd: parseFloat($("ct-dd").value), tipus:"ct"}); toast("Prova en marxa. Pots tancar el panell: continuarà treballant."); }
+  catch(e){ toast(e.message); }
+  loadCT();
+}
+const ctSelect=cur=>{ const v=cur||15; return `<label for="ct-dd">Caiguda màxima que acceptes</label>
+  <select id="ct-dd">${[5,10,15,25].map(x=>`<option value="${x}" ${x==v?"selected":""}>${x} %</option>`).join("")}</select>`; };
+const ctIntro=`<p>Prova tres maneres clàssiques de fer moltes operacions petites cada setmana (reversió a la mitjana, ruptura curta i graella) amb espelmes de 5 minuts dels últims 6 mesos reals, en els 6 valors més líquids. Sense apalancament, amb stop a cada operació i aturada d'emergència. Calcula el resultat amb quatre nivells de costos, des de zero fins als que paga ara el bot, per veure exactament on deixa de guanyar. Tarda uns 5-10 minuts.</p>
+  <p class="sub" style="margin:0 0 8px">Criteri d'èxit, fixat abans de la prova: guanyar diners amb costos realistes (futurs, ordres a mercat), no passar de la caiguda acceptada, i superar la prova de robustesa.</p>`;
+function renderCT(){
+  const body=$("ct-body"); if(!ct) return;
+  const st=ct.estat||{}, res=ct.resultats;
+  const running=st.estat==="descarregant"||st.estat==="provant";
+  clearTimeout(ctTimer); if(running) ctTimer=setTimeout(loadCT,5000);
+  $("ct-when").textContent = res && !running ? `Última prova ${ago(res.generat)}` : "";
+  if(running){ body.innerHTML=`<p>${esc(st.missatge||"Treballant…")}</p><div class="bar"><i style="width:${st.pct||0}%"></i></div>
+      <p>${fmtNum(st.pct||0,0)} % fet. Pots tancar el panell: la prova continua i els resultats apareixeran aquí.</p>`; return; }
+  const errMsg=(st.estat==="error"||st.estat==="interrompuda")?`<p class="warn">${esc(st.missatge)}</p>`:"";
+  if(!res){ body.innerHTML=ctIntro+errMsg+`<div class="controls">${ctSelect()}<button class="btn" id="ct-go" onclick="startCT()">Fes la prova</button></div>`; return; }
+  const lim=res.caiguda_maxima_acceptada_pct, costs=res.costos, R=res.realista;
+  const per=`${new Date(res.periode_prova.des_de).toLocaleDateString("ca-ES",{day:"numeric",month:"short",year:"numeric"})} – ${new Date(res.periode_prova.fins).toLocaleDateString("ca-ES",{day:"numeric",month:"short",year:"numeric"})}`;
+  const synth=res.dades_sintetiques?`<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>`:"";
+  const win=res.families.find(f=>f.id===res.guanyadora);
+  const box = win ? `<div class="winner" style="border-color:var(--gain)"><div class="sub" style="margin:0">Supera el criteri d'èxit</div><h3>${esc(win.nom)}</h3>
+      <div class="nums"><span>Resultat en 6 mesos<b class="${sign(win.escenaris[R].rendiment_pct)}">${fmtP(win.escenaris[R].rendiment_pct)}</b></span><span>Caiguda màxima<b>${fmtNum(win.escenaris[R].caiguda_pct,1)} %</b></span><span>Operacions/setmana<b>${fmtNum(win.operacions_setmana,0)}</b></span></div>
+      <div class="sub" style="margin:0">Encara no es pot aplicar al bot: si la vols provar en simulació en directe, l'hem d'implementar.</div></div>`
+    : `<div class="winner" style="border-color:var(--amber)"><h3>Cap estratègia de curt termini supera el criteri d'èxit</h3><div class="sub" style="margin:0">El més prudent és no fer-ne servir cap.</div></div>`;
+  const cell=x=>`<b class="${sign(x.rendiment_pct)}">${fmtP(x.rendiment_pct)}</b><small>caiguda ${fmtNum(x.caiguda_pct,0)} %</small>${x.aturada?`<span class="tag-s stop">Aturada ${new Date(x.aturada).toLocaleDateString("ca-ES",{day:"numeric",month:"short"})}</span>`:""}`;
+  const table=`<div class="scroll"><table class="lev"><thead><tr><th>Estratègia</th>${costs.map(c=>`<th>${esc(c.nom)}<br><small style="font-weight:400">${fmtNum(2*c.pct,2)} % per operació</small></th>`).join("")}</tr></thead><tbody>
+    ${res.families.map(f=>`<tr><td><span class="sw" style="background:${CT_COLORS[f.id]}"></span><b style="display:inline">${esc(f.nom)}</b>
+        <div class="more-info" style="margin:2px 0 0">${esc(f.desc)}<br>Paràmetres: ${esc(f.parametres)}.</div>
+        <ul class="crit">${f.criteri.map(p=>`<li class="${p.ok?"ok":"ko"}">${esc(p.text)}</li>`).join("")}</ul></td>
+      ${costs.map(c=>`<td class="${c.id===R?"okc":""}" style="${c.id===R?"":"box-shadow:none"}">${cell(f.escenaris[c.id])}</td>`).join("")}</tr>`).join("")}
+    <tr class="ref"><td><i>Comprar Bitcoin i no tocar res</i></td><td colspan="${costs.length}" style="text-align:left;color:var(--muted)"><i>${fmtP(res.btc.rendiment_pct)} en el període, caiguda ${fmtNum(res.btc.caiguda_pct,0)} %</i></td></tr>
+    </tbody></table></div><p class="note">Resultat en el període de prova (no anualitzat). La columna remarcada és l'escenari realista.</p>`;
+  const perTrade=`<h3 class="lab-h3">La clau: quant guanya cada operació abans de pagar</h3>
+    <table class="cmp"><thead><tr><th>Estratègia</th><th>Operacions/setmana</th><th>Guany brut per operació</th><th>Cost realista per operació</th></tr></thead><tbody>
+    ${res.families.map(f=>{const g=f.guany_brut_operacio_pct, cr=f.cost_anada_tornada_pct[R]; return `<tr><td>${esc(f.nom)}</td><td>${fmtNum(f.operacions_setmana,0)}</td>
+      <td class="${sign(g)}">${pct(g,3)}</td><td class="${g>cr?"pos":"neg"}">${fmtNum(cr,2)} %</td></tr>`;}).join("")}</tbody></table>
+    <p class="note">Si el guany brut mitjà per operació és més petit que el cost per operació, l'estratègia perd diners per molt que operi.</p>`;
+  const rb=res.robustesa;
+  const rob=res.families.map(f=>{const r=rb[f.id]; return `<h3 class="lab-h3">Robustesa: ${esc(f.nom)}</h3><p class="verdict ${r.veredicte}">${esc(r.text)}</p>
+    <p>${r.positives} de ${r.total} combinacions guanyen amb costos realistes. Resultat mitjà: ${fmtP(r.mediana_pct)}.</p>
+    <div class="scroll"><table class="heat"><tbody>${r.combinacions.map(x=>{const v=x.rendiment_pct,a=Math.min(1,Math.abs(v)/30)*.55+.12;
+      return `<tr><th style="text-align:left;font-size:.82rem">${esc(x.etiqueta)}</th><td style="background:${v>0?`rgba(34,165,91,${a})`:`rgba(217,58,47,${a})`}"><b>${pct(v,1)}</b><small>caiguda ${fmtNum(x.caiguda_pct,0)} %</small></td></tr>`;}).join("")}</tbody></table></div>`;}).join("");
+  body.innerHTML = synth+errMsg+`<p>Prova del ${per}, espelmes de 5 minuts, ${res.valors.join(", ")}. Rendiments passats no garanteixen els futurs.</p>`+box+table
+    +`<div class="legend" id="ct-legend"></div><div id="ctchart" style="height:230px;margin:12px -4px 4px;position:relative"></div><p class="note">Corbes amb costos realistes.</p>`
+    +perTrade+rob+`<div class="controls" style="margin-top:14px">${ctSelect(lim)}<button class="btn ghost" id="ct-go" onclick="startCT()">Torna a fer la prova</button></div>`;
+  drawLines("ctchart","ct-legend",[...res.families.map(f=>({nom:f.nom,c:CT_COLORS[f.id],pts:f.corba,w:1.8})),{nom:"Comprar Bitcoin",c:"var(--muted)",pts:res.btc.corba,w:1.2,dash:"5 4"}]);
+}
+async function loadCT(){ try{ const r=await fetch("api/lab?tipus=ct",{cache:"no-store",credentials:"same-origin"}); if(!r.ok) throw 0; ct=await r.json(); renderCT(); }catch(e){} }
+loadCT(); setInterval(()=>{ if(!(ct&&["descarregant","provant"].includes(ct.estat?.estat))) loadCT(); },60000);
+
+let rz; addEventListener("resize",()=>{clearTimeout(rz); rz=setTimeout(()=>{ data&&renderChart(data.equity,data.status.capital_inicial_eur); lab&&lab.resultats&&renderLabChart(lab.resultats); lc&&lc.resultats&&renderLC(); ct&&ct.resultats&&renderCT(); },150);});
 </script>
 </body>
 </html>

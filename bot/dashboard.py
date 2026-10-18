@@ -30,7 +30,8 @@ LAB_STATUS = os.path.join(LAB_DIR, "estat.json")
 LAB_RESULTS = os.path.join(LAB_DIR, "resultats.json")
 LC_STATUS = os.path.join(LAB_DIR, "estat_lc.json")
 LC_RESULTS = os.path.join(LAB_DIR, "resultats_lc.json")
-FILES = {"llarg": (LAB_STATUS, LAB_RESULTS), "lc": (LC_STATUS, LC_RESULTS)}
+FILES = {"llarg": (LAB_STATUS, LAB_RESULTS), "lc": (LC_STATUS, LC_RESULTS),
+         "ct": (os.path.join(LAB_DIR, "estat_ct.json"), os.path.join(LAB_DIR, "resultats_ct.json"))}
 _lab_lock = threading.Lock()
 
 
@@ -215,7 +216,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(collect(), default=str).encode()
             return self._send(200, body, "application/json")
         if path == "/api/lab":
-            tipus = "lc" if "tipus=lc" in self.path else "llarg"
+            q = self.path.split("tipus=", 1)
+            tipus = q[1].split("&")[0] if len(q) > 1 and q[1].split("&")[0] in FILES else "llarg"
             return self._send(200, json.dumps(lab_state(tipus), default=str).encode(), "application/json")
         return self._send(404, b"not found", "text/plain")
 

@@ -26,7 +26,7 @@ log = logging.getLogger("backtest")
 def synthetic(symbols, timeframe, days, seed=7):
     """Preus aleatoris amb fases de tendència. NO serveixen per avaluar l'estratègia."""
     rng = np.random.default_rng(seed)
-    mins = {"15m": 15, "30m": 30, "1h": 60, "4h": 240}[timeframe]
+    mins = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240}[timeframe]
     n = days * 1440 // mins
     idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").floor(f"{mins}min"), periods=n, freq=f"{mins}min")
     out = {}

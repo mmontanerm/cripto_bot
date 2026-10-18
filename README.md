@@ -136,6 +136,26 @@ El **criteri d'èxit està fixat abans de la prova**: guanyar diners sense passa
 
 En local: `python run_lab.py --tipus lc --dd 25`.
 
+## Laboratori de curt termini (5 minuts)
+
+Prova la idea de fer moltes operacions petites cada setmana amb espelmes de 5 minuts dels últims 6 mesos reals, en els 6 valors més líquids. Hi ha tres famílies:
+
+- **Reversió a la mitjana:** quan el preu surt de les bandes de Bollinger, aposta que hi tornarà, en llarg o en curt.
+- **Ruptura curta:** quan el preu trenca el rang de les últimes hores, hi entra amb un objectiu i un stop petits.
+- **Graella (grid):** compres escalonades per sota del preu; cada lot es ven un esglaó més amunt.
+
+Les estratègies operen sense apalancament, amb stop a cada operació i aturada d'emergència. Els resultats es calculen amb quatre nivells de costos per operació:
+- sense costos;
+- futurs amb ordres limitades;
+- futurs amb ordres a mercat (l'escenari realista);
+- Kraken spot.
+
+La clau és la taula **guany brut per operació** comparat amb el **cost per operació**: si el guany és més petit que el cost, l'estratègia perd diners per molt que operi.
+
+Criteri d'èxit fixat abans de la prova: guanyar amb costos realistes, no passar de la caiguda acceptada i superar la robustesa.
+
+En local: `python run_lab.py --tipus ct --dd 15`.
+
 ## Altres maneres de tenir-lo encès 24/7
 
 Si no vols fer servir Render:
