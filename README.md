@@ -115,6 +115,27 @@ La recomanada és la de més rendiment que **guanya diners**, no passa de la cai
 
 En local: `python run_lab.py --dd 25`.
 
+## Laboratori llarg/curt amb apalancament
+
+Una segona secció del panell prova estratègies que intenten guanyar tant quan el preu puja (llarg) com quan baixa (curt), amb apalancament x1, x2 i x3, sobre els mateixos ~6 anys de dades reals:
+
+- **Bitcoin: llarg o efectiu.** És la referència sense curts.
+- **Bitcoin: llarg o curt**, segons la mitjana de 200 dies.
+- **Bitcoin i Ether: llarg o curt.**
+- **Rotació llarg/curt:** llarg en els més forts quan el mercat puja, curt en els més febles quan baixa.
+
+Simula futurs perpetus amb costos prudents:
+- comissió del 0,05% més lliscament del 0,05%;
+- els llargs paguen un finançament del 0,01% cada 8 hores (els curts no en cobren res);
+- liquidació intra-espelma si el compte cau per sota del 0,5% de la posició;
+- aturada d'emergència a la caiguda triada.
+
+També hi ha proves de robustesa per a la tendència (15 combinacions) i per a la rotació (18).
+
+El **criteri d'èxit està fixat abans de la prova**: guanyar diners sense passar de la caiguda acceptada ni ser aturada, guanyar més que mantenir Bitcoin per cada euro de caiguda, i superar la prova de robustesa. Aquestes estratègies encara no es poden aplicar al bot: si alguna supera el criteri, s'implementa.
+
+En local: `python run_lab.py --tipus lc --dd 25`.
+
 ## Altres maneres de tenir-lo encès 24/7
 
 Si no vols fer servir Render:

@@ -28,6 +28,9 @@ HTML_PATH = os.path.join(os.path.dirname(__file__), "static", "panell.html")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAB_STATUS = os.path.join(LAB_DIR, "estat.json")
 LAB_RESULTS = os.path.join(LAB_DIR, "resultats.json")
+LC_STATUS = os.path.join(LAB_DIR, "estat_lc.json")
+LC_RESULTS = os.path.join(LAB_DIR, "resultats_lc.json")
+FILES = {"llarg": (LAB_STATUS, LAB_RESULTS), "lc": (LC_STATUS, LC_RESULTS)}
 _lab_lock = threading.Lock()
 
 
@@ -88,13 +91,18 @@ def _pid_alive(pid) -> bool:
         return False
 
 
-def lab_state() -> dict:
-    st = _read_json(LAB_STATUS)
+def _status(path: str) -> dict:
+    st = _read_json(path)
     if st.get("estat") in ("descarregant", "provant"):
         age = time.time() - datetime.fromisoformat(st["actualitzat"]).timestamp() if st.get("actualitzat") else 1e9
         if not _pid_alive(st.get("pid", -1)) or age > 900:
             st["estat"] = "interrompuda"
             st["missatge"] = "La prova s'ha interromput (probablement el servei s'ha reiniciat). Torna-la a llançar."
+    return st
+
+
+def lab_state(tipus: str = "llarg") -> dict:
+    status_file, results_file = FILES.get(tipus, FILES["llarg"])
     override = None
     if os.path.exists(OVERRIDE):
         try:
@@ -102,25 +110,27 @@ def lab_state() -> dict:
                 override = yaml.safe_load(f)
         except Exception:
             override = None
-    return {"estat": st, "resultats": _read_json(LAB_RESULTS) or None, "aplicada": override}
+    return {"estat": _status(status_file), "resultats": _read_json(results_file) or None, "aplicada": override}
 
 
-def lab_start(dd: float) -> tuple[int, str]:
+def lab_start(dd: float, tipus: str = "llarg") -> tuple[int, str]:
+    tipus = tipus if tipus in FILES else "llarg"
     with _lab_lock:
-        st = lab_state()["estat"]
-        if st.get("estat") in ("descarregant", "provant"):
-            return 409, "Ja hi ha una prova en marxa."
+        # Una sola prova alhora, sigui del tipus que sigui (memòria i CPU limitades a Render)
+        for sf, _ in FILES.values():
+            if _status(sf).get("estat") in ("descarregant", "provant"):
+                return 409, "Ja hi ha una prova en marxa. Espera que acabi."
         os.makedirs(LAB_DIR, exist_ok=True)
-        with open(LAB_STATUS, "w", encoding="utf-8") as f:
+        with open(FILES[tipus][0], "w", encoding="utf-8") as f:
             json.dump({"estat": "descarregant", "pct": 0, "missatge": "Arrencant la prova",
                        "actualitzat": datetime.now(timezone.utc).isoformat(), "pid": os.getpid()}, f)
 
         def lower_priority():  # que el laboratori no alenteixi el bot
             os.nice(10)
-        subprocess.Popen([sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd)], cwd=ROOT,
+        subprocess.Popen([sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd), "--tipus", tipus], cwd=ROOT,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
                          preexec_fn=lower_priority)
-        log.info("Laboratori llançat des del panell (caiguda màxima acceptada %s%%)", dd)
+        log.info("Laboratori (%s) llançat des del panell (caiguda màxima acceptada %s%%)", tipus, dd)
         return 202, "Prova en marxa."
 
 
@@ -205,7 +215,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(collect(), default=str).encode()
             return self._send(200, body, "application/json")
         if path == "/api/lab":
-            return self._send(200, json.dumps(lab_state(), default=str).encode(), "application/json")
+            tipus = "lc" if "tipus=lc" in self.path else "llarg"
+            return self._send(200, json.dumps(lab_state(tipus), default=str).encode(), "application/json")
         return self._send(404, b"not found", "text/plain")
 
     def do_POST(self):  # noqa: N802
@@ -228,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
                 dd = max(5.0, min(50.0, float(body.get("dd", 25))))
             except Exception:
                 dd = 25.0
-            code, msg = lab_start(dd)
+            code, msg = lab_start(dd, str(body.get("tipus", "llarg")))
         elif path == "/api/lab/apply":
             code, msg = lab_apply(str(body.get("id", "")))
         elif path == "/api/lab/reset":

@@ -173,6 +173,19 @@ select{font:inherit;color:var(--ink);background:var(--panel);border:1.5px solid 
 .heat tbody th{text-align:right}
 .heat td{border-radius:5px;padding:7px 10px;text-align:center;min-width:5.2rem;color:var(--ink)}
 .heat td b{display:block;font-weight:600} .heat td small{color:var(--ink);opacity:.75}
+.lev{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:6px}
+.lev th{font-weight:500;color:var(--muted);text-align:center;padding:6px 4px;border-bottom:1px solid var(--rule)}
+.lev th:first-child,.lev td:first-child{text-align:left;padding-left:0}
+.lev td{text-align:center;padding:8px 4px;border-top:1px solid var(--rule);vertical-align:top}
+.lev td b{display:block;font-weight:600}
+.lev td small{display:block;color:var(--muted);font-size:.78rem;line-height:1.3}
+.lev td.okc{box-shadow:inset 0 0 0 2px var(--gain);border-radius:6px}
+.tag-s{display:inline-block;font-size:.72rem;font-weight:600;padding:0 6px;border-radius:999px;margin-top:2px}
+.tag-s.liq{background:var(--loss);color:var(--panel)} .tag-s.stop{background:var(--amber);color:var(--panel)}
+.crit{list-style:none;padding:0;margin:8px 0 4px}
+.crit li{padding:3px 0 3px 26px;position:relative;font-size:.93rem}
+.crit li::before{position:absolute;left:0;top:2px;font-weight:700;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:.75rem;color:var(--panel)}
+.crit li.ok::before{content:"✓";background:var(--gain)} .crit li.ko::before{content:"✕";background:var(--loss)}
 @media (max-width:640px){.cmp .hide-s{display:none}}
 footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
 </style>
@@ -213,6 +226,12 @@ footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
   <section class="lab" id="lab">
     <div class="lab-head"><h2>Laboratori de proves</h2><span class="state" id="lab-when"></span></div>
     <div id="lab-body"><p>Carregant…</p></div>
+  </section>
+
+
+  <section class="lab" id="lab-lc">
+    <div class="lab-head"><h2>Laboratori llarg/curt amb apalancament</h2><span class="state" id="lc-when"></span></div>
+    <div id="lc-body"><p>Carregant…</p></div>
   </section>
 
   <div class="grid">
@@ -560,7 +579,99 @@ async function loadLab(){
 }
 loadLab(); setInterval(()=>{ if(!(lab&&["descarregant","provant"].includes(lab.estat?.estat))) loadLab(); },60000);
 
-let rz; addEventListener("resize",()=>{clearTimeout(rz); rz=setTimeout(()=>{ data&&renderChart(data.equity,data.status.capital_inicial_eur); lab&&lab.resultats&&renderLabChart(lab.resultats); },150);});
+/* ---------------- laboratori llarg/curt ---------------- */
+const LC_COLORS = {btc_llarg:"#8A97A5", btc_lc:"#A0661A", btceth_lc:"#2457A6", rot_lc:"#7A3E8E"};
+let lc=null, lcTimer=null;
+async function startLC(){
+  const b=$("lc-go"); if(b) b.disabled=true;
+  try{ await post("api/lab/start",{dd: parseFloat($("lc-dd").value), tipus:"lc"}); toast("Prova en marxa. Pots tancar el panell: continuarà treballant."); }
+  catch(e){ toast(e.message); }
+  loadLC();
+}
+function lcSelect(cur){
+  const v=cur||25;
+  return `<label for="lc-dd">Caiguda màxima que acceptes</label>
+    <select id="lc-dd">${[15,25,35].map(x=>`<option value="${x}" ${x==v?"selected":""}>${x} %</option>`).join("")}</select>`;
+}
+const lcIntro = `<p>Prova estratègies que guanyen tant quan el preu puja (llarg) com quan baixa (curt), amb apalancament x1, x2 i x3, sobre uns 6 anys d'espelmes reals, des del 2021. Simula futurs amb comissions, cost de finançament, liquidació (si el compte cau a zero, s'acaba) i l'aturada d'emergència a la caiguda que triïs. Tarda uns 5-10 minuts.</p>
+  <p class="sub" style="margin:0 0 8px">Criteri d'èxit, fixat abans de la prova: guanyar diners sense passar de la caiguda acceptada ni ser aturada, guanyar més que mantenir Bitcoin per cada euro de caiguda, i que la família d'estratègies superi la prova de robustesa.</p>`;
+function stopTag(a){ if(!a) return ""; const d=new Date(a[1]).toLocaleDateString("ca-ES",{month:"short",year:"2-digit"});
+  return a[0]==="liquidat" ? `<span class="tag-s liq">Liquidada ${d}</span>` : `<span class="tag-s stop">Aturada ${d}</span>`; }
+function renderLC(){
+  const body=$("lc-body"); if(!lc) return;
+  const st=lc.estat||{}, res=lc.resultats;
+  const running = st.estat==="descarregant"||st.estat==="provant";
+  clearTimeout(lcTimer); if(running) lcTimer=setTimeout(loadLC,5000);
+  $("lc-when").textContent = res && !running ? `Última prova ${ago(res.generat)}` : "";
+  if(running){
+    body.innerHTML=`<p>${esc(st.missatge||"Treballant…")}</p><div class="bar"><i style="width:${st.pct||0}%"></i></div>
+      <p>${fmtNum(st.pct||0,0)} % fet. Pots tancar el panell: la prova continua i els resultats apareixeran aquí.</p>`;
+    return;
+  }
+  const errMsg=(st.estat==="error"||st.estat==="interrompuda")?`<p class="warn">${esc(st.missatge)}</p>`:"";
+  if(!res){ body.innerHTML = lcIntro + errMsg + `<div class="controls">${lcSelect()}<button class="btn" id="lc-go" onclick="startLC()">Fes la prova</button></div>`; return; }
+  const lim=res.caiguda_maxima_acceptada_pct, c=res.costos, levs=res.apalancaments, cand=res.candidata;
+  const per=`${monthYear(res.periode_prova.des_de)} – ${monthYear(res.periode_prova.fins)}`;
+  const synth=res.dades_sintetiques?`<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>`:"";
+  const verdictBox = cand ? `<div class="winner" style="border-color:${cand.superat?"var(--gain)":"var(--amber)"}">
+      <div class="sub" style="margin:0">${cand.superat?"Supera el criteri d'èxit":"La millor candidata no supera el criteri d'èxit"}</div>
+      <h3>${esc(cand.nom)}, x${cand.apalancament}</h3>
+      <div class="nums"><span>Rendiment anual<b class="${sign(cand.cel.rendiment_anual_pct)}">${fmtP(cand.cel.rendiment_anual_pct)}</b></span>
+        <span>Caiguda màxima<b>${fmtNum(cand.cel.caiguda_maxima_pct,1)} %</b></span></div>
+      <ul class="crit">${cand.punts.map(p=>`<li class="${p.ok?"ok":"ko"}">${esc(p.text)}</li>`).join("")}</ul>
+      <div class="sub" style="margin:4px 0 0">${cand.superat?"Aquesta estratègia encara no es pot aplicar al bot: si la vols provar en simulació en directe, l'hem d'implementar.":"El més prudent és no fer-la servir."}</div></div>`
+    : `<div class="winner" style="border-color:var(--amber)"><h3>Cap estratègia ni apalancament guanya diners sense passar del ${lim} % de caiguda o ser aturada</h3>
+      <div class="sub" style="margin:0">No supera el criteri d'èxit. El més prudent és no fer-ne servir cap.</div></div>`;
+  const levTable = `<table class="lev"><thead><tr><th>Estratègia</th>${levs.map(l=>`<th>x${l}</th>`).join("")}</tr></thead><tbody>
+    ${res.estrategies.map(s=>`<tr><td><span class="sw" style="background:${LC_COLORS[s.id]||"var(--line)"}"></span><b style="display:inline">${esc(s.nom)}</b>
+      <div class="more-info" style="margin:2px 0 0">${esc(s.desc)}</div></td>
+      ${levs.map(l=>{const x=s.per_apalancament[String(l)];
+        return `<td class="${x.compleix?"okc":""}"><b class="${sign(x.rendiment_anual_pct)}">${fmtP(x.rendiment_anual_pct)}</b><small>caiguda ${fmtNum(x.caiguda_maxima_pct,0)} %</small>${stopTag(x.aturada)}</td>`;}).join("")}</tr>`).join("")}
+    ${res.referencies.map(r=>`<tr class="ref"><td><i>${esc(r.nom)}</i></td><td colspan="${levs.length}" style="text-align:left;color:var(--muted)"><i>${fmtP(r.rendiment_anual_pct)} anual, caiguda ${fmtNum(r.caiguda_maxima_pct,0)} %</i></td></tr>`).join("")}
+    </tbody></table>
+    <p class="note">Rendiment anual i caiguda màxima. Requadre verd: compleix el primer punt del criteri. Costos: comissió ${fmtNum(c.comissio_pct,2)} % + lliscament ${fmtNum(c.lliscament_pct,2)} % per operació; els llargs paguen un finançament del ${fmtNum(c.financament_8h_pct,2)} % cada 8 h; liquidació si el compte cau per sota del ${fmtNum(c.marge_manteniment_pct,1)} % de la posició; aturada d'emergència al ${lim} %.</p>`;
+  const all=[...res.estrategies,...res.referencies];
+  const years=[...new Set(all.flatMap(s=>Object.keys(s.per_any||{})))].sort();
+  const yearTable=`<div class="scroll"><table class="cmp years"><thead><tr><th>Estratègia (x1)</th>${years.map(y=>`<th>${y}</th>`).join("")}</tr></thead><tbody>
+    ${all.map(s=>`<tr class="${s.per_apalancament?"":"ref"}"><td>${esc(s.nom.replace(" i no tocar res",""))}</td>${years.map(y=>{const v=s.per_any?.[y]; return `<td class="${v==null?"":sign(v)}">${v==null?"—":pct(v,0)}</td>`;}).join("")}</tr>`).join("")}</tbody></table></div>`;
+  const rb=res.robustesa;
+  const heat=(cells,rowKey,colKey,rowLbl,colLbl)=>{ const rs=[...new Set(cells.map(x=>x[rowKey]))], cs=[...new Set(cells.map(x=>x[colKey]))];
+    return `<div class="scroll"><table class="heat"><thead><tr><th></th>${cs.map(v=>`<th>${colLbl(v)}</th>`).join("")}</tr></thead><tbody>
+      ${rs.map(r=>`<tr><th>${rowLbl(r)}</th>${cs.map(cc=>{const g=cells.filter(x=>x[rowKey]===r&&x[colKey]===cc); const v=g.reduce((a,x)=>a+x.rendiment_anual_pct,0)/g.length; const dd=g.reduce((a,x)=>a+x.caiguda_maxima_pct,0)/g.length;
+        const a=Math.min(1,Math.abs(v)/60)*.55+.12; return `<td style="background:${v>0?`rgba(34,165,91,${a})`:`rgba(217,58,47,${a})`}"><b>${pct(v,0)}</b><small>caiguda ${fmtNum(dd,0)} %</small></td>`;}).join("")}</tr>`).join("")}</tbody></table></div>`; };
+  const robBlock=(t,k,extra)=>`<h3 class="lab-h3">${t}</h3><p class="verdict ${rb[k].veredicte}">${esc(rb[k].text)}</p>
+    <p>${rb[k].positives} de ${rb[k].total} combinacions guanyen diners, i ${rb[k].baten_btc} guanyen més que mantenir Bitcoin per cada euro de caiguda. Rendiment anual mitjà: ${fmtP(rb[k].mediana_anual_pct)}, amb una caiguda típica del ${fmtNum(rb[k].mediana_caiguda_pct,0)} %. Sense apalancament ni aturada d'emergència.</p>${extra}`;
+  body.innerHTML = synth + errMsg + `<p>Prova de ${per}. Rendiments passats no garanteixen els futurs.</p>` + verdictBox + levTable
+    + `<div class="legend" id="lc-legend"></div><div id="lcchart" style="height:230px;margin:12px -4px 4px;position:relative"></div>`
+    + `<h3 class="lab-h3">Any per any (sense apalancament)</h3>` + yearTable
+    + robBlock("Robustesa: tendència llarg/curt","tendencia",heat(rb.tendencia.combinacions,"sma","univers",v=>`Mitjana ${v} d.`,v=>v))
+    + robBlock("Robustesa: rotació llarg/curt","rotacio",heat(rb.rotacio.combinacions,"mom","top",v=>`${v} dies`,v=>`${v} valors`)+`<p class="note">Cada casella fa la mitjana de la revisió diària i la setmanal.</p>`)
+    + `<div class="controls" style="margin-top:14px">${lcSelect(lim)}<button class="btn ghost" id="lc-go" onclick="startLC()">Torna a fer la prova</button></div>`;
+  drawLines("lcchart","lc-legend",[...res.estrategies.map(s=>({nom:s.nom+" (x1)",c:LC_COLORS[s.id]||"#2457A6",pts:s.corba,w:1.8})),
+    ...res.referencies.map(r=>({nom:r.nom,c:"var(--muted)",pts:r.corba,w:1.2,dash:r.id==="btc"?"5 4":"2 3"}))]);
+}
+function drawLines(boxId, legendId, series){
+  const box=$(boxId); if(!box) return; series=series.filter(s=>s.pts&&s.pts.length>1); if(!series.length){box.innerHTML="";return;}
+  const W=box.clientWidth||700,H=box.clientHeight||230,pl=46,pr=8,pt=8,pb=20;
+  const allT=series.flatMap(s=>s.pts.map(p=>new Date(p[0]).getTime())), allV=series.flatMap(s=>s.pts.map(p=>p[1])).filter(v=>v>0);
+  const t0=Math.min(...allT),t1=Math.max(...allT); let lo=Math.log(Math.max(Math.min(...allV),10)),hi=Math.log(Math.max(...allV)); if(hi-lo<0.05){hi+=0.05;lo-=0.05;}
+  const X=t=>pl+(t-t0)/(t1-t0||1)*(W-pl-pr), Y=v=>pt+(hi-Math.log(Math.max(v,Math.exp(lo))))/(hi-lo)*(H-pt-pb);
+  const ticks=[]; const fs=[2,4,10,100,1000,1e4]; const f=fs.find(f=>(hi-lo)/Math.log(f)<=5)||1e6;
+  for(let k=-6;k<=12;k++){ const v=1000*Math.pow(f,k); const l=Math.log(v); if(l>=lo&&l<=hi) ticks.push(v); }
+  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Evolució de 1.000 euros" style="width:100%;height:100%;display:block">
+    ${ticks.map(v=>`<line x1="${pl}" x2="${W-pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--rule)" stroke-width="1" ${v===1000?'stroke-dasharray="3 3"':""}/>
+      <text x="${pl-6}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${v>=1e6?fmtNum(v/1e6,0)+" M":v>=1000?fmtNum(v/1000,v%1000?1:0)+" k":fmtNum(v,0)}</text>`).join("")}
+    ${series.map(s=>`<path d="${s.pts.map((p,i)=>(i?"L":"M")+X(new Date(p[0]).getTime()).toFixed(1)+" "+Y(p[1]).toFixed(1)).join(" ")}" fill="none" stroke="${s.c}"
+      stroke-width="${s.w}" ${s.dash?`stroke-dasharray="${s.dash}"`:""} stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`).join("")}
+    <text x="${pl}" y="${H-4}" font-size="11" fill="var(--muted)">${monthYear(t0)}</text><text x="${W-pr}" y="${H-4}" font-size="11" fill="var(--muted)" text-anchor="end">${monthYear(t1)}</text></svg>`;
+  $(legendId).innerHTML=`<span style="margin-right:4px">1.000 € invertits:</span>`+series.map(s=>`<span><i style="background:${s.c};${s.dash?"opacity:.7":""}"></i>${esc(s.nom.replace(" i no tocar res",""))}</span>`).join("");
+}
+async function loadLC(){
+  try{ const r=await fetch("api/lab?tipus=lc",{cache:"no-store",credentials:"same-origin"}); if(!r.ok) throw 0; lc=await r.json(); renderLC(); }catch(e){}
+}
+loadLC(); setInterval(()=>{ if(!(lc&&["descarregant","provant"].includes(lc.estat?.estat))) loadLC(); },60000);
+
+let rz; addEventListener("resize",()=>{clearTimeout(rz); rz=setTimeout(()=>{ data&&renderChart(data.equity,data.status.capital_inicial_eur); lab&&lab.resultats&&renderLabChart(lab.resultats); lc&&lc.resultats&&renderLC(); },150);});
 </script>
 </body>
 </html>
