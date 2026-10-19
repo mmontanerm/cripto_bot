@@ -1,4 +1,4 @@
-"""Arrenca el bot 24/7 en mode simulació, amb el panell web.
+"""Arrenca el bot 24/7 (tendència llarg/curt, simulació) amb el panell web.
 
     python run_bot.py      -> panell a http://localhost:8080
 """

@@ -198,6 +198,30 @@ select{font:inherit;color:var(--ink);background:var(--panel);border:1.5px solid 
 .seg b{display:block;font-size:1.15rem;font-weight:600}
 .seg small{display:block;color:var(--muted);font-size:.8rem}
 @media (max-width:640px){.cmp .hide-s{display:none}}
+/* ---------- control i bot de tendència ---------- */
+.ctl{margin-bottom:16px}
+.ctl-grid{display:grid;gap:12px 24px}
+@media (min-width:800px){.ctl-grid{grid-template-columns:1fr 1fr}}
+.btnrow{display:flex;flex-wrap:wrap;gap:8px}
+.btn.warnb{color:var(--loss);box-shadow:inset 0 0 0 1.5px var(--loss)}
+.btn.quiet{color:var(--muted);box-shadow:inset 0 0 0 1.5px var(--rule)}
+.ctl-set{display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center}
+.ctl-set label{font-size:.92rem;color:var(--muted)}
+.ctl-set .btn{grid-column:1/-1;justify-self:start}
+.ctl-set .note{grid-column:1/-1;margin:0}
+.ddbar{height:4px;background:var(--sunk);border-radius:2px;margin-top:4px;overflow:hidden}
+.ddbar i{display:block;height:100%;width:0;transition:width .6s}
+.pill{display:inline-block;font-size:.74rem;font-weight:600;padding:0 7px;border-radius:999px;margin-left:6px;vertical-align:1px}
+.pill.long,.tag.long{background:var(--gain);color:var(--panel)} .pill.short,.tag.short{background:var(--loss);color:var(--panel)}
+.chan{grid-column:2/-1;display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:.76rem;color:var(--muted);margin-top:2px}
+.chan .track{position:relative;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--loss) 0,var(--sunk) 12%,var(--sunk) 88%,var(--gain) 100%)}
+.chan .track i{position:absolute;top:-3px;width:10px;height:12px;border-radius:3px;background:var(--ink)}
+@media (max-width:640px){.chan{grid-template-columns:1fr 1fr}.chan .track{grid-column:1/-1;order:-1;margin:4px 0}.chan .lbl.r{text-align:right}}
+.alert #alert-a .btn{margin-top:8px}
+ul.how{margin:4px 0 8px;padding-left:20px;font-size:.92rem} ul.how li{margin:3px 0}
+#eq-legend{margin:2px 0 0}
+#lab-det>summary{font-size:1.15rem}
+.lab .lab-head{justify-content:flex-end}
 footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
 </style>
 </head>
@@ -214,29 +238,43 @@ footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
     <span class="mode" id="mode">Simulació</span>
   </header>
 
-  <div class="alert" id="alert"><strong id="alert-t"></strong><p id="alert-p"></p></div>
+  <div class="alert" id="alert"><strong id="alert-t"></strong><p id="alert-p"></p><div id="alert-a"></div></div>
 
   <div class="hero">
     <div class="hero-top">
       <div class="cap" id="cap">—</div>
       <div class="deltas">
-        <div class="delta">Total<strong id="d-total">—</strong></div>
-        <div class="delta">Avui<strong id="d-today">—</strong></div>
+        <div class="delta">Bot<strong id="d-total">—</strong></div>
+        <div class="delta">Bitcoin al mateix temps<strong id="d-btc">—</strong></div>
       </div>
     </div>
+    <div class="legend" id="eq-legend"></div>
     <div id="chart"><div class="empty">La corba del capital apareixerà quan el bot porti uns minuts funcionant.</div></div>
     <div class="meters">
-      <div class="meter">Caiguda des del màxim<span id="m-dd">—</span></div>
+      <div class="meter">Caiguda des del màxim<span id="m-dd">—</span><div class="ddbar"><i id="m-ddbar"></i></div></div>
+      <div class="meter">Invertit ara<span id="m-inv">—</span></div>
       <div class="meter">Operacions tancades<span id="m-ops">—</span></div>
       <div class="meter">Guanyadores<span id="m-win">—</span></div>
-      <div class="meter">Efectiu disponible<span id="m-cash">—</span></div>
+      <div class="meter">Costos pagats<span id="m-cost">—</span></div>
     </div>
   </div>
 
-
-  <section class="lab" id="lab">
-    <div class="lab-head"><h2>Laboratori llarg/curt</h2><span class="state" id="lab-when"></span></div>
-    <div id="lab-body"><p>Carregant…</p></div>
+  <section class="ctl">
+    <h2>Control</h2>
+    <div class="ctl-grid">
+      <div>
+        <div class="btnrow" id="ctl-btns"></div>
+        <p class="note" id="ctl-note"></p>
+      </div>
+      <div class="ctl-set">
+        <label for="set-exp">Diners que fa servir</label>
+        <select id="set-exp"></select>
+        <label for="set-dd">Fre d'emergència</label>
+        <select id="set-dd"></select>
+        <button class="btn ghost" onclick="saveSettings()">Desa</button>
+        <p class="note" id="set-note"></p>
+      </div>
+    </div>
   </section>
 
   <div class="grid">
@@ -247,11 +285,15 @@ footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
       </section>
       <section>
         <h2>Què està vigilant</h2>
-        <p class="sub" id="radar-sub">Cada valor amb el que el bot en pensa ara mateix.</p>
+        <p class="sub">Cada hora, en tancar l'espelma, mira si algun valor trenca el seu canal dels últims 7 dies.</p>
         <ul class="radar" id="radar"></ul>
       </section>
     </div>
     <div class="col">
+      <section>
+        <h2>Com va respecte al laboratori</h2>
+        <div id="compare"></div>
+      </section>
       <section>
         <h2>Últimes operacions</h2>
         <div id="trades"></div>
@@ -262,15 +304,22 @@ footer{color:var(--muted);font-size:.82rem;text-align:center;margin-top:20px}
           <div class="log" id="log"></div>
         </details>
         <details>
-          <summary>Paràmetres actius</summary>
-          <dl class="params" id="params"></dl>
-          <p class="note">Per canviar-los, edita config.yaml a GitHub. El bot s'actualitza sol en un parell de minuts.</p>
+          <summary>Com funciona i paràmetres</summary>
+          <div id="params"></div>
         </details>
       </section>
     </div>
   </div>
+
+  <section class="lab" id="lab">
+    <details id="lab-det">
+      <summary>Laboratori (proves amb dades històriques)</summary>
+      <div class="lab-head"><span class="state" id="lab-when"></span></div>
+      <div id="lab-body"><p>Carregant…</p></div>
+    </details>
+  </section>
   <div class="toast" id="toast" role="status"></div>
-  <footer id="foot">Diners simulats amb preus reals de Kraken. El panell només mostra informació: no pot comprar ni vendre.</footer>
+  <footer id="foot">Diners simulats amb preus reals de Kraken.</footer>
 </div>
 
 <script>
@@ -281,9 +330,9 @@ const pct = (v,d=2)=> (v>0?"+":"")+fmtNum(v,d)+" %";
 const sign = v => v>0?"pos":v<0?"neg":"";
 const $ = id => document.getElementById(id);
 const esc = s => String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const REASON = {stop:"Stop de pèrdues",stop_dinamic:"Stop dinàmic (protegeix guanys)",objectiu:"Objectiu assolit",
-  canvi_tendencia:"Canvi de tendència",temps_maxim:"Temps màxim",aturada_emergencia:"Aturada d'emergència",fi_backtest:"Final de prova"};
-const ORDER = {in:0,a_punt:1,esperant:2,lateral:3,baixista:4,filtre:5,poc_moviment:6,sense_dades:7};
+const coin = s => esc(String(s).replace("/EUR",""));
+const REASON = {stop:"stop de pèrdues",sortida_canal:"sortida per canal",manual:"tancada des del panell",
+  aturada_emergencia:"aturada d'emergència",reinici:"reinici del compte"};
 let data = null, showAll = false;
 
 function ago(ts){
@@ -295,26 +344,29 @@ function ago(ts){
   return `fa ${Math.round(s/86400)} dies`;
 }
 const when = ts => { const d=new Date(ts); return isNaN(d)? "" : d.toLocaleString("ca-ES",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}); };
+const dur = h => h<1 ? "menys d'1 h" : h<48 ? `${fmtNum(h,0)} h` : `${fmtNum(h/24,1)} dies`;
 
 function renderHeader(st){
   const age = st.actualitzat ? (Date.now()-new Date(st.actualitzat).getTime())/1000 : 1e9;
-  const tower = $("tower"); const nPos = Object.keys(st.posicions||{}).length; const nSym = Object.keys(st.mercat||{}).length;
+  const nPos = Object.keys(st.posicions||{}).length, nSym = Object.keys(st.valors||{}).length;
   let s="green", line;
-  if(st.aturat_emergencia){ s="red"; line="<b>Aturat</b> per seguretat"; }
-  else if(age>300){ s="amber"; line=`<b>Sense notícies</b> des de ${ago(st.actualitzat)}`; }
-  else if(st.bloquejat_avui){ s="amber"; line="<b>En pausa</b> fins demà"; }
+  if(age>300){ s="amber"; line=`<b>Sense notícies</b> des de ${ago(st.actualitzat)}`; }
+  else if(st.estat==="aturat"){ s="red"; line="<b>Aturat</b> pel fre d'emergència"; }
+  else if(st.estat==="pausa"){ s="amber"; line=`<b>En pausa</b>: no obre posicions noves${nPos?`, vigila ${nPos} ${nPos===1?"posició oberta":"posicions obertes"}`:""}`; }
   else line = `<b>Treballant</b>: vigila ${nSym} valors, ${nPos} ${nPos===1?"posició oberta":"posicions obertes"}`;
-  tower.dataset.s = s; tower.setAttribute("aria-label", line.replace(/<[^>]+>/g,""));
+  $("tower").dataset.s = s; $("tower").setAttribute("aria-label", line.replace(/<[^>]+>/g,""));
   $("state").innerHTML = `${line}. Revisat <span id="ago">${ago(st.actualitzat)}</span>.`;
   $("mode").textContent = st.mode==="paper" ? "Simulació" : "Diners reals";
-
-  const a=$("alert");
-  if(st.aturat_emergencia){ a.className="alert show red"; $("alert-t").textContent="Aturada d'emergència activa";
-    $("alert-p").textContent=`El capital ha caigut més del ${st.config?.risc?.max_drawdown_pct}% des del màxim i el bot ho ha tancat tot. Per rearmar-lo, a Render obre la pestanya Shell i escriu: python status.py --reset-halt`; }
-  else if(age>300){ a.className="alert show amber"; $("alert-t").textContent="El bot no ha actualitzat l'estat recentment";
-    $("alert-p").textContent="Pot ser que s'estigui reiniciant o que hagi tingut un problema. Mira la pestanya Logs del servei a Render."; }
-  else if(st.bloquejat_avui){ a.className="alert show amber"; $("alert-t").textContent="Pèrdua diària màxima assolida";
-    $("alert-p").textContent=`Avui el capital ha baixat més del ${st.config?.risc?.daily_max_loss_pct}%. Les posicions obertes continuen protegides, però no se n'obriran de noves fins demà (UTC).`; }
+  const a=$("alert"), lim=st.config?.risc?.caiguda_maxima_pct;
+  $("alert-a").innerHTML="";
+  if(age>300){ a.className="alert show amber"; $("alert-t").textContent="El bot no ha actualitzat l'estat recentment";
+    $("alert-p").textContent="Pot ser que s'estigui reiniciant (passa uns minuts després de cada canvi a GitHub) o que hagi tingut un problema. Si dura més de 10 minuts, mira la pestanya Logs del servei a Render."; }
+  else if(st.estat==="aturat"){ a.className="alert show red"; $("alert-t").textContent="Fre d'emergència activat";
+    $("alert-p").textContent=`El ${when(st.aturat_des_de)} el capital va caure més del ${fmtNum(lim,0)} % des del seu màxim i el bot ho va tancar tot. No obrirà res fins que el rearmis.`;
+    $("alert-a").innerHTML=`<button class="btn" onclick="act('rearma')">Rearma el bot</button>`; }
+  else if(st.estat==="pausa"){ a.className="alert show amber"; $("alert-t").textContent="El bot està en pausa";
+    $("alert-p").textContent="No obre posicions noves. Les que hi ha obertes continuen amb el seu stop i la seva sortida.";
+    $("alert-a").innerHTML=`<button class="btn" onclick="act('repren')">Reprèn</button>`; }
   else a.className="alert";
 }
 
@@ -322,89 +374,167 @@ function renderHero(d){
   const st=d.status;
   $("cap").textContent = fmtEUR.format(st.capital_eur);
   const t=$("d-total"); t.textContent=pct(st.rendiment_total_pct); t.className=sign(st.rendiment_total_pct);
-  const td=$("d-today"); td.textContent=pct(st.rendiment_avui_pct??0); td.className=sign(st.rendiment_avui_pct);
-  $("m-dd").textContent = fmtNum(st.caiguda_des_del_maxim_pct)+" %";
-  $("m-ops").textContent = d.trades_total;
-  $("m-win").textContent = d.trades_total ? fmtNum(d.trades_guanyadores/d.trades_total*100,0)+" %" : "—";
-  $("m-cash").textContent = fmtEUR.format(st.efectiu_eur);
+  const b=$("d-btc"); b.textContent=st.btc_rendiment_pct==null?"—":pct(st.btc_rendiment_pct); b.className=sign(st.btc_rendiment_pct);
+  const lim=st.config.risc.caiguda_maxima_pct;
+  $("m-dd").textContent = `${fmtNum(st.caiguda_pct,1)} % de ${fmtNum(lim,0)} %`;
+  const f=Math.min(100,st.caiguda_pct/lim*100); const bar=$("m-ddbar"); bar.style.width=f+"%";
+  bar.style.background = f>75?"var(--loss)":f>40?"var(--amber)":"var(--gain)";
+  $("m-inv").textContent = `${fmtNum(st.invertit_pct,0)} %`;
+  const S=st.estadistiques;
+  $("m-ops").textContent = S.operacions;
+  $("m-win").textContent = S.operacions ? fmtNum(S.guanyadores_pct,0)+" %" : "—";
+  $("m-cost").textContent = fmtEUR.format(st.comissions_eur+st.financament_eur);
   renderChart(d.equity, st.capital_inicial_eur);
 }
 
 function renderChart(pts, base){
   const box=$("chart");
-  if(!pts || pts.length<3){ box.innerHTML='<div class="empty">La corba del capital apareixerà quan el bot porti uns minuts funcionant.</div>'; return; }
+  if(!pts || pts.length<3){ box.innerHTML='<div class="empty">La corba del capital apareixerà quan el bot porti uns minuts funcionant.</div>'; $("eq-legend").innerHTML=""; return; }
+  const b0=(pts.find(p=>p.b)||{}).b;
+  const btc=b0?pts.filter(p=>p.b).map(p=>({t:p.t,v:base*p.b/b0})):[];
   const W=box.clientWidth||600, H=box.clientHeight||210, padT=14, padB=22, padL=6, padR=6;
-  const xs=pts.map(p=>new Date(p.t).getTime()), ys=pts.map(p=>p.v);
-  let lo=Math.min(...ys, base), hi=Math.max(...ys, base); const m=(hi-lo)*0.12||base*0.005; lo-=m; hi+=m;
+  const xs=pts.map(p=>new Date(p.t).getTime()), all=[...pts.map(p=>p.v),...btc.map(p=>p.v),base];
+  let lo=Math.min(...all), hi=Math.max(...all); const m=(hi-lo)*0.12||base*0.005; lo-=m; hi+=m;
   const x0=xs[0], x1=xs[xs.length-1]||x0+1;
   const X=t=>padL+(t-x0)/(x1-x0||1)*(W-padL-padR), Y=v=>padT+(hi-v)/(hi-lo)*(H-padT-padB);
-  const path=pts.map((p,i)=>(i?"L":"M")+X(xs[i]).toFixed(1)+" "+Y(p.v).toFixed(1)).join(" ");
-  const area=path+` L${X(x1).toFixed(1)} ${H-padB} L${X(x0).toFixed(1)} ${H-padB} Z`;
-  const last=pts[pts.length-1];
-  const fmtD=t=>new Date(t).toLocaleDateString("ca-ES",{day:"numeric",month:"short"});
+  const line=arr=>arr.map((p,i)=>(i?"L":"M")+X(new Date(p.t).getTime()).toFixed(1)+" "+Y(p.v).toFixed(1)).join(" ");
+  const path=line(pts), area=path+` L${X(x1).toFixed(1)} ${H-padB} L${X(x0).toFixed(1)} ${H-padB} Z`;
+  const last=pts[pts.length-1], fmtD=t=>new Date(t).toLocaleDateString("ca-ES",{day:"numeric",month:"short"});
   box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Evolució del capital">
     <line x1="${padL}" x2="${W-padR}" y1="${Y(base)}" y2="${Y(base)}" stroke="var(--muted)" stroke-dasharray="3 4" stroke-width="1"/>
     <text x="${W-padR}" y="${Y(base)-5}" text-anchor="end" font-size="11" fill="var(--muted)">Capital inicial ${fmtEUR.format(base)}</text>
     <path d="${area}" fill="var(--line-fill)"/>
+    ${btc.length>1?`<path d="${line(btc)}" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`:""}
     <path d="${path}" fill="none" stroke="var(--line)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
     <circle cx="${X(x1)}" cy="${Y(last.v)}" r="4" fill="var(--line)"/>
     <text x="${padL}" y="${H-5}" font-size="11" fill="var(--muted)">${fmtD(x0)}</text>
     <text x="${W-padR}" y="${H-5}" font-size="11" fill="var(--muted)" text-anchor="end">Ara</text>
     <line id="cur" y1="${padT}" y2="${H-padB}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>
   </svg><div class="tip" id="tip"></div>`;
+  $("eq-legend").innerHTML=`<span><i style="background:var(--line)"></i>Bot</span>${btc.length>1?'<span><i style="background:var(--muted);opacity:.7"></i>Bitcoin comprat a l\'inici (referència)</span>':""}`;
   const svg=box.querySelector("svg"), tip=$("tip"), cur=$("cur");
   const move=e=>{ const r=svg.getBoundingClientRect(); const px=(e.clientX-r.left)/r.width*W;
     let i=0, best=1e18; xs.forEach((t,k)=>{const dx=Math.abs(X(t)-px); if(dx<best){best=dx;i=k;}});
     const xx=X(xs[i]); cur.setAttribute("x1",xx); cur.setAttribute("x2",xx); cur.setAttribute("visibility","visible");
     tip.style.display="block"; tip.style.left=(xx/W*r.width)+"px";
-    tip.textContent=`${when(pts[i].t)}: ${fmtEUR.format(pts[i].v)}`; };
+    const bb=pts[i].b&&b0?` · Bitcoin ${fmtEUR.format(base*pts[i].b/b0)}`:"";
+    tip.textContent=`${when(pts[i].t)}: ${fmtEUR.format(pts[i].v)}${bb}`; };
   const hide=()=>{tip.style.display="none"; cur.setAttribute("visibility","hidden");};
   svg.addEventListener("pointermove",move); svg.addEventListener("pointerdown",move); svg.addEventListener("pointerleave",hide);
 }
 
+/* ---------- control ---------- */
+async function act(what){
+  const Q={tanca_tot:"Tancar totes les posicions ara i posar el bot en pausa?",
+    reinicia:"Reiniciar el compte simulat? Es tanca tot, s'esborren les operacions i el capital torna a l'inicial. No es pot desfer."};
+  if(Q[what] && !confirm(Q[what])) return;
+  document.querySelectorAll(".ctl .btn").forEach(b=>b.disabled=true);
+  try{ const j=await post("api/control",{accio:what}); toast(j.missatge); }catch(e){ toast(e.message); }
+  setTimeout(load,4000); setTimeout(load,9000);
+}
+async function saveSettings(){
+  try{ const j=await post("api/ajustos",{exposicio_pct:parseFloat($("set-exp").value),caiguda_maxima_pct:parseFloat($("set-dd").value)}); toast(j.missatge); }
+  catch(e){ toast(e.message); }
+  setTimeout(load,4000); setTimeout(load,30000);
+}
+let setDirty=false;
+function renderControls(st){
+  const paused=st.estat==="pausa", halted=st.estat==="aturat", n=Object.keys(st.posicions||{}).length;
+  const b=[];
+  if(halted) b.push(`<button class="btn" onclick="act('rearma')">Rearma</button>`);
+  else if(paused) b.push(`<button class="btn" onclick="act('repren')">Reprèn</button>`);
+  else b.push(`<button class="btn ghost" onclick="act('pausa')">Pausa</button>`);
+  if(n) b.push(`<button class="btn ghost warnb" onclick="act('tanca_tot')">Tanca-ho tot</button>`);
+  b.push(`<button class="btn ghost quiet" onclick="act('reinicia')">Reinicia el compte</button>`);
+  $("ctl-btns").innerHTML=b.join("");
+  $("ctl-note").textContent = halted ? "Rearmar: torna a operar i agafa el capital actual com a nou màxim de referència."
+    : paused ? "Reprèn: tornarà a obrir posicions quan un valor trenqui el seu canal."
+    : "Pausa: deixa d'obrir posicions noves (les obertes es gestionen igual). Tanca-ho tot: ven/recompra totes les posicions ara i es posa en pausa.";
+  const r=st.config.risc, cap=st.capital_eur, nv=(st.config.valors||[]).length||6;
+  if(!setDirty){
+    const opts=(arr,v)=>[...new Set([...arr,Number(v)])].sort((a,b)=>a-b);
+    $("set-exp").innerHTML=opts([30,40,50,60,80,100],r.exposicio_pct).map(v=>`<option value="${v}" ${v==r.exposicio_pct?"selected":""}>${v} % del capital</option>`).join("");
+    $("set-dd").innerHTML=opts([10,15,20,25],r.caiguda_maxima_pct).map(v=>`<option value="${v}" ${v==r.caiguda_maxima_pct?"selected":""}>s'atura si cau un ${v} %</option>`).join("");
+  }
+  const e=parseFloat($("set-exp").value);
+  $("set-note").textContent=`Cada posició: uns ${fmtEUR.format(cap*e/100/nv)} (${fmtNum(e,0)} % repartit entre ${nv} valors). Amb el 100 %, al laboratori les caigudes van arribar al 20-24 %; amb el 60 %, uns 12-14 %. Els canvis s'apliquen a les posicions noves.`;
+}
+["set-exp","set-dd"].forEach(id=>document.addEventListener("change",e=>{ if(e.target.id===id){ setDirty=true; data&&renderControls(data.status); }}));
+
+/* ---------- posicions ---------- */
 function renderPositions(st){
   const ps=Object.entries(st.posicions||{});
-  if(!ps.length){ $("positions").innerHTML='<div class="empty">Cap posició oberta. El bot compra quan un valor en tendència alcista fa un retrocés i torna a pujar.</div>'; return; }
+  if(!ps.length){ $("positions").innerHTML='<div class="empty">Cap posició oberta. El bot n\'obrirà una quan un valor tanqui una hora per sobre del màxim (llarg) o per sota del mínim (curt) dels últims 7 dies.</div>'; return; }
   $("positions").innerHTML = ps.map(([s,p])=>{
-    const long=p.costat==="llarg", lo=long?p.stop:p.objectiu, hi=long?p.objectiu:p.stop;
-    const span=hi-lo||1, at=v=>Math.min(100,Math.max(0,(v-lo)/span*100));
-    const pnlPct = p.entrada ? ((p.preu_actual-p.entrada)/p.entrada*100*(long?1:-1)) : 0;
-    const good=(p.pnl_eur??0)>=0;
-    const fromE=at(p.entrada), now=at(p.preu_actual);
+    const long=p.costat==="llarg", good=p.pnl_eur>=0;
+    const lo=Math.min(p.stop,p.preu,p.entrada,p.sortida??p.stop), hi=Math.max(p.stop,p.preu,p.entrada,p.sortida??p.stop), at=v=>((v-lo)/(hi-lo||1)*100);
     return `<div class="posrow">
-      <div><span class="sym">${esc(s.replace("/EUR",""))}</span><span class="side">${long?"llarg":"curt"}, entrada ${fmtPrice(p.entrada)} €, ara ${fmtPrice(p.preu_actual)} €</span></div>
-      <div class="pnl ${good?"pos":"neg"}">${p.pnl_eur!=null?fmtEUR.format(p.pnl_eur):""} <small>(${pct(pnlPct)})</small></div>
-      <div class="range" title="Entre stop i objectiu">
-        <div class="fill" style="left:${Math.min(fromE,now)}%;width:${Math.abs(now-fromE)}%;background:var(${good?"--gain":"--loss"})"></div>
-        <i style="left:calc(${fromE}% - 1px);background:var(--muted)"></i>
-        <i style="left:calc(${now}% - 1px)"></i>
+      <div><span class="sym">${coin(s)}</span><span class="pill ${long?"long":"short"}">${long?"Llarg ↑":"Curt ↓"}</span>
+        <span class="side">${fmtEUR.format(p.eur)} · oberta ${when(p.obert)} (${dur(p.hores)})</span></div>
+      <div class="pnl ${good?"pos":"neg"}">${fmtEUR.format(p.pnl_eur)} <small>(${pct(p.pnl_pct)})</small></div>
+      <div class="range">
+        <div class="fill" style="left:${Math.min(at(p.entrada),at(p.preu))}%;width:${Math.abs(at(p.preu)-at(p.entrada))}%;background:var(${good?"--gain":"--loss"})"></div>
+        <i style="left:calc(${at(p.stop)}% - 1px);background:var(--loss)" title="Stop"></i>
+        ${p.sortida!=null?`<i style="left:calc(${at(p.sortida)}% - 1px);background:var(--amber)" title="Sortida"></i>`:""}
+        <i style="left:calc(${at(p.entrada)}% - 1px);background:var(--muted)" title="Entrada"></i>
+        <i style="left:calc(${at(p.preu)}% - 1px)" title="Ara"></i>
       </div>
-      <div class="rlabels"><span>${long?"Stop":"Objectiu"} ${fmtPrice(lo)}</span><span>Oberta ${when(p.obert)}</span><span>${long?"Objectiu":"Stop"} ${fmtPrice(hi)}</span></div>
-    </div>`;}).join("");
+      <div class="rlabels"><span>Entrada ${fmtPrice(p.entrada)} € · ara ${fmtPrice(p.preu)} €</span><span><b class="neg">Stop</b> ${fmtPrice(p.stop)} €${p.sortida!=null?` · <b style="color:var(--amber)">Sortida</b> ${fmtPrice(p.sortida)} €`:""}</span></div>
+    </div>`;}).join("") + `<p class="note">Stop: es tanca a l'instant si el preu hi arriba. Sortida: es tanca si una hora tanca ${"més enllà"} d'aquest nivell (el mínim de les últimes 84 h per als llargs, el màxim per als curts). La sortida es mou a favor a mesura que el preu avança.</p>`;
 }
 
+/* ---------- radar ---------- */
+function radarText(m){
+  if(m.estat==="llarg") return `Posició llarga. Surt si una hora tanca per sota de ${fmtPrice(m.sortida)} € o si toca el stop (${fmtPrice(m.stop)} €).`;
+  if(m.estat==="curt") return `Posició curta. Surt si una hora tanca per sobre de ${fmtPrice(m.sortida)} € o si toca el stop (${fmtPrice(m.stop)} €).`;
+  if(m.estat==="pausa") return "En pausa: no obre posicions noves.";
+  if(m.estat==="aturat") return "Fre d'emergència actiu: no obre posicions.";
+  if(m.entrada_llarg==null) return esc(m.text||"");
+  return `Entrarà en llarg si una hora tanca per sobre de ${fmtPrice(m.entrada_llarg)} € (${pct(m.dist_llarg_pct,1)}) o en curt si tanca per sota de ${fmtPrice(m.entrada_curt)} € (${pct(m.dist_curt_pct,1)}).`;
+}
 function renderRadar(st){
-  const pos=st.posicions||{}; const rows=Object.entries(st.mercat||{}).map(([s,m])=>({s,m,k:pos[s]?"in":m.estat}));
-  rows.sort((a,b)=>(ORDER[a.k]??9)-(ORDER[b.k]??9) || a.s.localeCompare(b.s));
+  const rows=Object.entries(st.valors||{});
   if(!rows.length){ $("radar").innerHTML='<li><span class="empty" style="grid-column:1/-1">Llegint els primers preus…</span></li>'; return; }
-  const TAG={in:["in","En posició"],a_punt:["ready","A punt"],esperant:["wait","Esperant"],lateral:["","Lateral"],
-    baixista:["","Baixista"],poc_moviment:["","Massa quiet"],sense_dades:["","Sense dades"],filtre:["","Filtre BTC"]};
-  $("radar").innerHTML = rows.map(({s,m,k})=>{ const [c,l]=TAG[k]||["",k];
-    const why = k==="in" ? `Posició oberta. Tendència ${m.tendencia}, RSI ${fmtNum(m.rsi,0)}.` : m.explicacio;
-    return `<li><span class="sym">${esc(s.replace("/EUR",""))}</span><span class="tag ${c}">${l}</span>
-      <span class="price">${fmtPrice(m.preu)} €</span><span class="why">${esc(why)}</span></li>`;}).join("");
-  const tf={"15m":"15 minuts","30m":"30 minuts","1h":"hora","4h":"4 hores"}[st.timeframe]||st.timeframe;
-  $("radar-sub").textContent=`El que pensa de cada valor ara mateix. Es revisa en tancar cada espelma (cada ${tf}).`;
+  const ORD={llarg:0,curt:0,a_prop:1,esperant:2,pausa:3,aturat:3,sense_dades:4};
+  rows.sort((a,b)=>(ORD[a[1].estat]??9)-(ORD[b[1].estat]??9)||a[0].localeCompare(b[0]));
+  const TAG={llarg:["long","Llarg ↑"],curt:["short","Curt ↓"],a_prop:["ready","A prop"],esperant:["wait","Esperant"],pausa:["","En pausa"],aturat:["","Aturat"],sense_dades:["","Sense dades"]};
+  $("radar").innerHTML = rows.map(([s,m])=>{ const [c,l]=TAG[m.estat]||["",m.estat];
+    let gauge="";
+    if(m.entrada_curt!=null && m.entrada_llarg!=null){
+      const lo=m.entrada_curt, hi=m.entrada_llarg, x=Math.max(0,Math.min(100,(m.preu-lo)/(hi-lo||1)*100));
+      gauge=`<div class="chan"><span class="lbl l">Curt si &lt; ${fmtPrice(lo)}</span><div class="track"><i style="left:calc(${x}% - 5px)"></i></div><span class="lbl r">Llarg si &gt; ${fmtPrice(hi)}</span></div>`;
+    }
+    return `<li><span class="sym">${coin(s)}</span><span class="tag ${c}">${l}</span>
+      <span class="price">${fmtPrice(m.preu)} €</span>${["llarg","curt"].includes(m.estat)?"":gauge}<span class="why">${radarText(m)}</span></li>`;}).join("");
 }
 
+/* ---------- operacions ---------- */
 function renderTrades(d){
-  if(!d.trades.length){ $("trades").innerHTML='<div class="empty">Encara no hi ha operacions tancades.</div>'; return; }
-  const n = showAll ? 60 : 8;
+  if(!d.trades.length){ $("trades").innerHTML='<div class="empty">Encara no hi ha operacions tancades. Aquesta estratègia en fa unes 6-8 per setmana entre tots els valors, i les posicions poden durar de poques hores a diverses setmanes.</div>'; return; }
+  const n = showAll ? 200 : 8;
   $("trades").innerHTML = `<table class="trades"><tbody>${d.trades.slice(0,n).map(t=>{ const v=parseFloat(t.pnl_eur);
-    return `<tr><td><span class="sym">${esc(t.symbol.replace("/EUR",""))}</span> <span class="side">${esc(t.side)}</span>
-      <span class="when">${when(t.exit_ts)}, ${esc(REASON[t.reason]||t.reason)}</span></td>
+    return `<tr><td><span class="sym">${coin(t.symbol)}</span> <span class="pill ${t.side==="llarg"?"long":"short"}">${t.side==="llarg"?"Llarg":"Curt"}</span>
+      <span class="when">${when(t.exit_ts)} · ${esc(REASON[t.reason]||t.reason)} · ${dur(parseFloat(t.hours))}</span></td>
       <td class="${sign(v)}"><strong>${fmtEUR.format(v)}</strong><span class="when">${pct(parseFloat(t.pnl_pct))}</span></td></tr>`;}).join("")}</tbody></table>`
-    + (d.trades.length>8 ? `<button class="more" onclick="showAll=!showAll;renderTrades(data)">${showAll?"Mostra'n menys":`Mostra'n més (${Math.min(d.trades.length,60)})`}</button>` : "");
+    + (d.trades.length>8 ? `<button class="more" onclick="showAll=!showAll;renderTrades(data)">${showAll?"Mostra'n menys":`Mostra-les totes (${d.trades.length})`}</button>` : "");
+}
+
+/* ---------- comparació amb el laboratori ---------- */
+function renderCompare(st){
+  const S=st.estadistiques, R=S.referencia, n=S.operacions;
+  const rng=(a,d=1,u=" %")=>`${fmtNum(a[0],d)} a ${fmtNum(a[1],d)}${u}`;
+  const v=(x,d=1)=>x==null?"—":pct(x,d);
+  const rows=[["Operacions per setmana",n?fmtNum(S.operacions_setmana,1):"—",rng(R.operacions_setmana,1,"")],
+    ["Guanyadores",n?fmtNum(S.guanyadores_pct,0)+" %":"—",rng(R.guanyadores_pct,0)],
+    ["Net de cada guanyadora",v(S.net_guanyadora_pct),"+"+rng(R.net_guanyadora_pct)],
+    ["Net de cada perdedora",v(S.net_perdedora_pct),rng(R.net_perdedora_pct)],
+    ["Net mitjà per operació",v(S.net_mitja_pct,2),"+"+rng(R.net_mitja_pct,2)]];
+  const conf = n<30 ? `Amb ${n} ${n===1?"operació":"operacions"} encara no es pot treure cap conclusió: la sort pesa massa. A partir d'unes 100 operacions (uns 3-4 mesos) la comparació comença a dir alguna cosa.`
+    : n<100 ? `${n} operacions: comença a donar una idea, però encara amb molt de marge d'error.` : `${n} operacions: la comparació ja és prou significativa.`;
+  $("compare").innerHTML=`<table class="cmp"><thead><tr><th></th><th>Bot en directe</th><th>Laboratori</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td>${r[0]}</td><td><b>${r[1]}</b></td><td>${r[2]}</td></tr>`).join("")}</tbody></table>
+    <p class="note">${conf} Aquesta estratègia perd sovint i poc i guanya poques vegades però molt: és normal veure ratxes de diverses perdedores seguides.</p>
+    <p class="note">En ${fmtNum(S.dies,1)} dies: ${fmtEUR.format(st.comissions_eur)} de comissions i lliscament i ${fmtEUR.format(st.financament_eur)} de finançament (ja descomptats del capital).</p>`;
 }
 
 function renderLog(lines){
@@ -417,19 +547,18 @@ function renderLog(lines){
 }
 
 function renderParams(c){
-  if(!c) return; const s=c.estrategia, r=c.risc;
-  const lab = c.laboratori && c.laboratori._origen;
-  const rows=[["Origen",lab?`Laboratori: ${lab.nom}`:"config.yaml de GitHub"],["Estratègia",s.mode==="rotacio"?`Rotació dels ${s.top_n||3} més forts`:"Retrocés en tendència"],
-    ["Filtre BTC",s.btc_filter||s.mode==="rotacio"?`Actiu (mitjana de ${s.btc_ma_days} dies)${data.status.filtre_btc_favorable===false?", ara desfavorable":""}`:"Desactivat"],
-    ...(s.top_n&&s.mode!=="rotacio"?[["Rànquing",`Només els ${s.top_n} més forts (${s.momentum_days} dies)`]]:[]),
-    ...(s.mode==="rotacio"?[["Momentum",`${s.momentum_days} dies`]]:[]),
-    ["Temporalitat",data.status.timeframe],["Tendència (EMA ràpida / lenta)",`${s.ema_fast} / ${s.ema_slow}`],
-    ["Compra quan el RSI supera",s.rsi_long],["Stop de pèrdues",`${s.stop_atr} × ATR`],["Objectiu de guany",`${s.take_profit_atr} × ATR`],
-    ["Stop dinàmic",`s'activa a ${s.trail_activate_atr} × ATR, distància ${s.trail_atr} × ATR`],["Marge mínim sobre costos",`${s.min_edge_over_costs} ×`],
-    ["Comissió simulada",`${c.comissio_pct} %`],["Risc per operació",`${r.risk_per_trade_pct} % del capital`],["Posició màxima",`${r.max_position_pct} % del capital`],
-    ["Posicions simultànies",r.max_open_positions],["Pèrdua diària màxima",`${r.daily_max_loss_pct} %`],["Caiguda que atura el bot",`${r.max_drawdown_pct} %`],
-    ["Curts (aprofitar baixades)",c.curts?"Activats":"Desactivats"]];
-  $("params").innerHTML=rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  const e=c.estrategia, r=c.risc, k=c.costos;
+  $("params").innerHTML=`<p class="note" style="margin-top:6px">El bot segueix les tendències en les dues direccions. Cada hora, en tancar l'espelma de cada valor:</p>
+    <ul class="how"><li><b>Obre un llarg</b> (guanya si puja) si tanca per sobre del màxim de les últimes ${e.canal_entrada_h} h (${fmtNum(e.canal_entrada_h/24,0)} dies).</li>
+    <li><b>Obre un curt</b> (guanya si baixa) si tanca per sota del mínim de les últimes ${e.canal_entrada_h} h.</li>
+    <li><b>Surt</b> d'un llarg si tanca per sota del mínim de les últimes ${e.canal_sortida_h} h (d'un curt, per sobre del màxim).</li>
+    <li><b>Stop</b> a ${fmtNum(e.stop_atr,0)} vegades el moviment mitjà per hora (ATR de ${e.atr_h} h), vigilat cada minut.</li></ul>
+    <dl class="params"><dt>Valors</dt><dd>${(c.valors||[]).map(coin).join(", ")}</dd>
+    <dt>Diners que fa servir</dt><dd>${fmtNum(r.exposicio_pct,0)} % del capital, a parts iguals</dd>
+    <dt>Fre d'emergència</dt><dd>s'atura si cau un ${fmtNum(r.caiguda_maxima_pct,0)} % des del màxim</dd>
+    <dt>Costos simulats</dt><dd>${fmtNum(k.fee_pct,2)} % comissió + ${fmtNum(k.slippage_pct,2)} % lliscament per costat</dd>
+    <dt>Finançament</dt><dd>els llargs paguen ${fmtNum(k.funding_8h_pct,2)} % cada 8 h</dd></dl>
+    <p class="note">Aquests paràmetres no s'optimitzen: són la combinació que el laboratori va triar més vegades. Al laboratori aquesta estratègia no va demostrar ser millor que entrar a l'atzar; això és un experiment per veure-la treballar amb preus reals, sense diners.</p>`;
 }
 
 async function load(){
@@ -438,8 +567,9 @@ async function load(){
     if(!r.ok) throw new Error(r.status);
     data=await r.json(); const st=data.status;
     if(!st.actualitzat){ $("state").textContent="El bot s'està engegant. Les dades apareixeran en un minut."; return; }
-    renderHeader(st); renderHero(data); renderPositions(st); renderRadar(st); renderTrades(data); renderLog(data.log); renderParams(st.config);
-    $("foot").textContent=`Diners simulats amb preus reals de Kraken. En marxa ${ago(st.en_marxa_des_de).replace("fa ","des de fa ")}. El panell només mostra informació: no pot comprar ni vendre.`;
+    renderHeader(st); renderHero(data); renderControls(st); renderPositions(st); renderRadar(st); renderTrades(data);
+    renderCompare(st); renderLog(data.log); renderParams(st.config);
+    $("foot").textContent=`Diners simulats amb preus reals de Kraken. Compte començat ${ago(st.compte_des_de)}; servei en marxa des de ${when(st.en_marxa_des_de)}.`;
   }catch(e){
     $("tower").dataset.s="amber";
     $("state").innerHTML="<b>Sense connexió</b> amb el bot. Torno a provar en 30 s.";
@@ -558,6 +688,7 @@ function renderLab(){
   body.querySelectorAll("details").forEach(d=>d.addEventListener("toggle",()=>{ if(mb) mb.draw(); if(pb) pb.draw(); }));
 }
 async function loadLab(){ try{ const r=await fetch("api/lab",{cache:"no-store",credentials:"same-origin"}); if(!r.ok) throw 0; lab=await r.json(); renderLab(); }catch(e){} }
+document.getElementById("lab-det").addEventListener("toggle",()=>{ if(document.getElementById("lab-det").open) renderLab(); });
 loadLab(); setInterval(()=>{ if(!(lab&&["descarregant","provant"].includes(lab.estat?.estat))) loadLab(); },60000);
 
 let rz; addEventListener("resize",()=>{clearTimeout(rz); rz=setTimeout(()=>{ data&&renderChart(data.equity,data.status.capital_inicial_eur); lab&&lab.resultats&&renderLab(); },150);});

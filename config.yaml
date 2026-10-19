@@ -1,78 +1,40 @@
 # ============================================================
 #  CRIPTO-BOT · Configuració
-#  Pots editar aquest fitxer amb el bot en marxa: es recarrega
-#  sol a cada cicle. Si hi ha un error de format, el bot ho
-#  avisa al log i continua amb la configuració anterior.
+#  Estratègia: TENDÈNCIA LLARG/CURT (la del laboratori), en SIMULACIÓ.
+#  La mida de les posicions i el fre d'emergència es poden canviar
+#  des del panell. La resta, editant aquest fitxer a GitHub: el bot
+#  es recarrega sol i, si hi ha un error, continua amb l'anterior.
 # ============================================================
 
-mode: paper            # paper = diners simulats (ÚNIC mode disponible a la v1)
-
+mode: paper            # paper = diners simulats (únic mode disponible)
 exchange: kraken       # d'on es llegeixen els preus en directe
-timeframe: 1h          # 15m, 30m, 1h, 4h. Més curt = més operacions = més comissions
+timeframe: 1h          # espelmes d'1 hora, com al laboratori
 poll_seconds: 60       # cada quants segons revisa preus i stops
 
-# Valors a operar (parells en EUR). Si un no existeix a l'exchange, se salta amb un avís.
+# Els mateixos 6 valors del laboratori (en EUR a Kraken)
 symbols:
   - BTC/EUR
   - ETH/EUR
   - SOL/EUR
   - XRP/EUR
-  - ADA/EUR
-  - LINK/EUR
-  - DOT/EUR
-  - LTC/EUR
-  - AVAX/EUR
   - DOGE/EUR
-  - ATOM/EUR
-  - UNI/EUR
+  - ADA/EUR
 
-# ---------- Compte simulat ----------
+# ---------- Compte simulat (costos de futurs amb ordres a mercat, com al laboratori) ----------
 paper:
   initial_capital: 1000.0   # EUR simulats
-  fee_pct: 0.40             # comissió per operació (%). 0.40 = taker Kraken nivell bàsic (conservador)
-  slippage_pct: 0.05        # lliscament estimat per operació (%)
-  min_order_eur: 10.0       # ordre mínima
+  fee_pct: 0.05             # comissió per costat (%)
+  slippage_pct: 0.02        # lliscament per costat (%)
+  funding_8h_pct: 0.01      # les posicions llargues paguen això cada 8 hores; a les curtes no se'ls compta cap ingrés
 
-# ---------- Estratègia ----------
-# Segueix la tendència i entra als retrocessos:
-#  - Tendència alcista: EMA ràpida > EMA lenta i preu > EMA lenta
-#  - Entrada llarga: en tendència alcista, el RSI torna a pujar per sobre de rsi_long
-#  - Entrada curta (si allow_short): en tendència baixista, el RSI torna a baixar per sota de rsi_short
-strategy:
-  mode: retroces            # retroces = compra retrocessos en tendència · rotacio = es queda amb els més forts
-  btc_filter: false         # true = només compra quan el BTC és per sobre de la seva mitjana de btc_ma_days dies
-  btc_ma_days: 200
-  top_n: 0                  # 0 = opera tots els valors · N = només els N amb més momentum
-  momentum_days: 30         # finestra per mesurar el momentum (rendiment dels últims N dies)
-  exposure: 1.0             # rotació: part del capital invertida (1.0 = tot, 0.5 = la meitat; regula el risc)
-  ema_fast: 20
-  ema_slow: 100
-  rsi_period: 14
-  rsi_long: 40
-  rsi_short: 60
-  atr_period: 14
-  stop_atr: 2.0             # stop loss a N x ATR de l'entrada
-  take_profit_atr: 4.0      # recollida de beneficis a N x ATR
-  trail_activate_atr: 2.0   # quan el guany arriba a N x ATR, s'activa el stop dinàmic
-  trail_atr: 1.5            # distància del stop dinàmic (N x ATR des del màxim)
-  exit_on_trend_flip: true  # tancar si la tendència es gira
-  max_hold_bars: 0          # 0 = sense límit de temps per posició
-  # Filtre anti-microguanys: només entra si el guany objectiu supera
-  # els costos totals (comissions + lliscament, anada i tornada) aquest nombre de vegades.
-  min_edge_over_costs: 3.0
+# ---------- Estratègia: paràmetres FIXOS (la combinació que el laboratori va triar més vegades) ----------
+estrategia:
+  canal_entrada_h: 168      # entra en llarg si tanca per sobre del màxim de les últimes 168 h (7 dies); en curt, per sota del mínim
+  canal_sortida_h: 84       # surt d'un llarg si tanca per sota del mínim de les últimes 84 h; d'un curt, per sobre del màxim
+  stop_atr: 4.0             # stop de pèrdues a 4 × ATR del preu d'entrada
+  atr_h: 24                 # ATR (moviment mitjà per hora) calculat amb 24 hores
 
-allow_short: false          # curts: aprofitar baixades. Al spot real cal marge/futurs (més risc). En paper es pot provar.
-
-# ---------- Gestió del risc ----------
-risk:
-  risk_per_trade_pct: 1.0       # % del capital que es pot perdre si salta el stop d'una operació
-  max_position_pct: 15.0        # mida màxima d'una posició (% del capital)
-  max_open_positions: 6
-  daily_max_loss_pct: 3.0       # si el dia (UTC) perd això, no s'obren més posicions fins demà
-  max_drawdown_pct: 15.0        # caiguda des del màxim que ATURA el bot i ho tanca tot
-  cooldown_bars_after_loss: 3   # espera N espelmes abans de tornar a entrar al mateix valor després d'una pèrdua
-
-# ---------- Backtest ----------
-backtest:
-  days: 365                 # dies d'històric a descarregar
-  source: binance           # binance permet descarregar molt històric (dades públiques)
+# ---------- Risc (es pot canviar des del panell) ----------
+risc:
+  exposicio_pct: 60         # part del capital que fa servir, repartida a parts iguals entre els 6 valors
+  caiguda_maxima_pct: 15    # si el capital cau això des del màxim, ho tanca tot i s'atura

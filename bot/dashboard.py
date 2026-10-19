@@ -1,8 +1,9 @@
-"""Panell web per veure què fa el bot (des de l'ordinador, l'iPad o el mòbil).
+"""Panell web per veure i controlar el bot (des de l'ordinador, l'iPad o el mòbil).
 
 Servidor mínim amb la llibreria estàndard de Python: no afegeix dependències.
 Protegit amb contrasenya (variable d'entorn DASHBOARD_PASSWORD).
-Només LLEGEIX l'estat del bot: des del panell no es pot comprar ni vendre res.
+Des del panell es pot posar en pausa, reprendre, tancar-ho tot, rearmar el fre, reiniciar el compte
+simulat i canviar l'exposició i el fre d'emergència. Les operacions les decideix sempre el bot.
 """
 from __future__ import annotations
 
@@ -19,8 +20,11 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import yaml
+
+from .config import PANEL_LIMITS
 from .lab_wf import DAYS as LAB_DAYS, PAST_END, PAST_START
-from .paths import EQUITY, LAB_DIR, LOG_DIR, OVERRIDE, STATUS, TRADES
+from .paths import COMMANDS, EQUITY, LAB_DIR, LOG_DIR, OLD_FILES, OVERRIDE, STATE_DIR, STATUS, TRADES
 
 log = logging.getLogger("panell")
 HTML_PATH = os.path.join(os.path.dirname(__file__), "static", "panell.html")
@@ -72,15 +76,71 @@ def _downsample(rows: list, n: int = 600) -> list:
 
 def collect() -> dict:
     trades = _read_csv(TRADES)
-    equity = [{"t": r["ts"], "v": float(r["equity"])} for r in _read_csv(EQUITY) if r.get("equity")]
+    equity = [{"t": r["ts"], "v": float(r["equity"]), "b": float(r["btc"]) if r.get("btc") else None}
+              for r in _read_csv(EQUITY) if r.get("equity")]
     return {
         "status": _read_json(STATUS),
-        "trades": list(reversed(trades))[:150],
+        "trades": list(reversed(trades))[:200],
         "trades_total": len(trades),
-        "trades_guanyadores": sum(1 for r in trades if float(r.get("pnl_eur") or 0) > 0),
         "equity": _downsample(equity),
         "log": _tail(os.path.join(LOG_DIR, "bot.log")),
     }
+
+
+ACTIONS = {"pausa", "repren", "tanca_tot", "rearma", "reinicia"}
+
+
+def send_command(action: str) -> tuple[int, str]:
+    """Deixa una ordre perquè el bot l'executi (ho fa en pocs segons)."""
+    if action not in ACTIONS:
+        return 400, "Ordre desconeguda."
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with _lab_lock:
+        cmds = []
+        if os.path.exists(COMMANDS):
+            try:
+                with open(COMMANDS, encoding="utf-8") as f:
+                    cmds = json.load(f)
+            except Exception:
+                cmds = []
+        cmds.append({"accio": action, "ts": datetime.now(timezone.utc).isoformat()})
+        tmp = COMMANDS + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cmds, f)
+        os.replace(tmp, COMMANDS)
+    log.info("Ordre del panell: %s", action)
+    return 202, "Ordre enviada. El bot l'executa en pocs segons."
+
+
+def save_settings(body: dict) -> tuple[int, str]:
+    """Canvia l'exposició i/o el fre d'emergència (state/ajustos.yaml, té prioritat sobre config.yaml)."""
+    risc = {}
+    for k, (lo, hi) in PANEL_LIMITS.items():
+        if k in body:
+            try:
+                v = float(body[k])
+            except Exception:
+                return 400, "Valor no vàlid."
+            if not lo <= v <= hi:
+                return 400, f"Ha d'estar entre {lo} i {hi}."
+            risc[k] = v
+    if not risc:
+        return 400, "No hi ha res a canviar."
+    current = {}
+    if os.path.exists(OVERRIDE):
+        try:
+            with open(OVERRIDE, encoding="utf-8") as f:
+                current = yaml.safe_load(f) or {}
+        except Exception:
+            current = {}
+    current.setdefault("risc", {}).update(risc)
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = OVERRIDE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        yaml.safe_dump(current, f, allow_unicode=True)
+    os.replace(tmp, OVERRIDE)
+    log.info("Ajustos del panell: %s", risc)
+    return 202, "Ajust desat. El bot l'aplica en menys d'un minut."
 
 
 def _pid_alive(pid) -> bool:
@@ -133,9 +193,13 @@ def cleanup_old_labs() -> None:
         if os.path.exists(p):
             os.remove(p)
             removed += 1
-    if os.path.exists(OVERRIDE):            # estratègia aplicada des d'un laboratori antic
-        os.replace(OVERRIDE, OVERRIDE + ".retirat")
-        log.info("Ajustos d'un laboratori anterior retirats: el bot torna a config.yaml de GitHub")
+    old_dir = os.path.join(STATE_DIR, "anterior")       # el bot anterior (retrocés/rotació): es guarda apart
+    for name in OLD_FILES:
+        p = os.path.join(STATE_DIR, name)
+        if os.path.exists(p):
+            os.makedirs(old_dir, exist_ok=True)
+            os.replace(p, os.path.join(old_dir, name))
+            removed += 1
     cache = os.path.join(LAB_DIR, "dades")
     if os.path.isdir(cache):
         for f in os.listdir(cache):
@@ -214,7 +278,11 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except Exception:
             return self._send(400, b"bad request", "text/plain")
-        if path == "/api/lab/start":
+        if path == "/api/control":
+            code, msg = send_command(str(body.get("accio", "")))
+        elif path == "/api/ajustos":
+            code, msg = save_settings(body)
+        elif path == "/api/lab/start":
             try:
                 dd = max(5.0, min(50.0, float(body.get("dd", 25))))
             except Exception:

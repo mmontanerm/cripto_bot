@@ -503,12 +503,30 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
     }
 
 
-def load_past(synthetic: bool = False) -> dict:
+def synthetic(symbols, timeframe, days, seed=7):
+    """Preus INVENTATS amb fases de tendència. Només serveixen per comprovar que el codi funciona."""
+    rng = np.random.default_rng(seed)
+    mins = {"15m": 15, "1h": 60}[timeframe]
+    n = days * 1440 // mins
+    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").floor(f"{mins}min"), periods=n, freq=f"{mins}min")
+    out = {}
+    for s in symbols:
+        vol = rng.uniform(0.004, 0.012) * np.sqrt(mins / 60)
+        drift = np.repeat(rng.normal(0, vol / 4, n // 300 + 1), 300)[:n]
+        close = 100 * np.exp(np.cumsum(drift + rng.normal(0, vol, n)))
+        openp = np.r_[close[0], close[:-1]]
+        spread = np.abs(rng.normal(0, vol, n)) * close
+        out[s] = pd.DataFrame({"open": openp, "high": np.maximum(openp, close) + spread,
+                               "low": np.minimum(openp, close) - spread, "close": close,
+                               "volume": rng.uniform(1, 10, n)}, index=idx)
+    return out
+
+
+def load_past(synthetic_data: bool = False) -> dict:
     """1 hora, de PAST_START a PAST_END. Sense omplir enrere: abans de cotitzar, el valor no opera."""
-    if synthetic:
-        import run_backtest as rb
+    if synthetic_data:
         raw = {s: df.resample("1h").agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna()
-               for s, df in rb.synthetic(SYMBOLS, "1h", 1370, seed=29).items()}
+               for s, df in synthetic(SYMBOLS, "1h", 1370, seed=29).items()}
         raw["SOL/EUR"] = raw["SOL/EUR"].iloc[5000:]          # simula un valor que comença a cotitzar més tard
     else:
         raw = {}
@@ -526,10 +544,9 @@ def load_past(synthetic: bool = False) -> dict:
     return {s: Sym(raw.pop(s).reindex(base).ffill()) for s in list(raw)}   # el ffill no omple abans del primer preu
 
 
-def load(synthetic: bool = False) -> dict:
-    if synthetic:
-        import run_backtest as rb
-        raw = rb.synthetic(SYMBOLS, SRC_TF, DAYS, seed=13)
+def load(synthetic_data: bool = False) -> dict:
+    if synthetic_data:
+        raw = synthetic(SYMBOLS, SRC_TF, DAYS, seed=13)
     else:
         raw = {}
         cache = os.path.join(LAB_DIR, "dades")

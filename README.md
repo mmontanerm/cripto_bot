@@ -1,27 +1,21 @@
-# Cripto-bot v1 · mode simulació
+# Cripto-bot · tendència llarg/curt en simulació
 
-Bot autònom que opera 12 criptomonedes 24/7 amb **diners simulats** i preus reals de Kraken.
+Bot autònom que opera 6 criptomonedes (BTC, ETH, SOL, XRP, DOGE, ADA) 24/7 amb **diners simulats** i preus reals de Kraken.
 No necessita compte a cap exchange ni claus d'API: el risc és zero.
 
 ## Què fa
 
-Cada minut llegeix els preus, revisa stops i objectius, i a cada espelma tancada (1 h per defecte) decideix si obre posicions:
+L'estratègia de **tendència llarg/curt** del laboratori, amb paràmetres fixos (la combinació que el laboratori va triar més vegades). Cada hora, en tancar l'espelma de cada valor:
 
-- **Tendència:** EMA 20 per sobre de l'EMA 100 i preu per sobre de l'EMA 100.
-- **Entrada:** en tendència alcista, compra quan el RSI torna a pujar per sobre de 40 (compra el retrocés).
-- **Sortida:** stop a 2×ATR, objectiu a 4×ATR, stop dinàmic que protegeix guanys, i tancament si la tendència es gira.
-- **Filtre anti-microguanys:** només entra si el guany objectiu és com a mínim 3 vegades el cost de l'operació (comissions + lliscament). Sense això, les comissions et menjarien vius.
-- **Curts** (`allow_short`): desactivats per defecte. En simulació els pots provar; en real requereixen marge o futurs, que impliquen més risc.
+- **Llarg** (guanya si puja): si tanca per sobre del màxim de les últimes 168 h (7 dies).
+- **Curt** (guanya si baixa): si tanca per sota del mínim de les últimes 168 h.
+- **Sortida:** un llarg es tanca si una hora tanca per sota del mínim de les últimes 84 h (un curt, per sobre del màxim).
+- **Stop de pèrdues:** a 4 × ATR (el moviment mitjà per hora de les últimes 24 h), vigilat cada minut.
+- **Mida:** el 60 % del capital, repartit a parts iguals entre els 6 valors (una posició com a màxim per valor). Sense apalancament.
+- **Costos com al laboratori:** 0,05 % de comissió + 0,02 % de lliscament a cada costat; les posicions llargues paguen un 0,01 % de finançament cada 8 hores.
+- **Fre d'emergència:** si el capital cau un 15 % des del seu màxim, ho tanca tot i s'atura fins que el rearmis.
 
-### Proteccions
-| Protecció | Valor per defecte |
-|---|---|
-| Pèrdua màxima per operació | 1% del capital |
-| Mida màxima per posició | 15% del capital |
-| Posicions simultànies | 6 |
-| Pèrdua diària màxima | 3% → no obre res més fins l'endemà |
-| Caiguda màxima | 15% → **ho tanca tot i s'atura** |
-| Espera després d'una pèrdua | 3 espelmes al mateix valor |
+Al laboratori aquesta estratègia **no va demostrar ser millor que entrar a l'atzar**. Això és un experiment per veure-la treballar amb preus reals, sense diners.
 
 ## Instal·lació (Windows, Mac o Linux)
 
@@ -38,35 +32,17 @@ pip install -r requirements.txt
 ## Ús
 
 ```bash
-python run_backtest.py          # 1) prova l'estratègia amb 1 any d'històric real
-python run_bot.py               # 2) arrenca el bot 24/7 i el panell a http://localhost:8080 (Ctrl+C per aturar)
-python status.py                # 3) mira com va: capital, posicions, últimes operacions
+python run_bot.py      # arrenca el bot 24/7 i el panell a http://localhost:8080 (Ctrl+C per aturar)
+python status.py       # resum a la consola: capital, posicions, últimes operacions
+python run_lab.py      # laboratori amb dades històriques (normalment es llança des del panell)
 ```
 
-Fitxers que genera:
-- `results/backtest.png` i `results/backtest_trades.csv`: resultats del backtest
-- `state/status.json`: estat en directe · `state/trades.csv`: totes les operacions
-- `logs/bot.log`: tot el que fa i per què
-
-Altres ordres:
-```bash
-python run_backtest.py --days 180       # canvia el període del backtest
-python run_backtest.py --synthetic      # dades inventades: només per comprovar que el codi funciona
-python status.py --reset-halt           # rearma el bot després d'una aturada d'emergència
-python status.py --reset-account        # torna a començar de zero (amb el bot aturat)
-```
+Fitxers que genera (a `state/`): `estat_bot.json` (el que mostra el panell), `compte_tendencia.json` (el compte simulat), `operacions.csv` (totes les operacions), `capital.csv` (la corba del capital i el preu del Bitcoin). El log és a `logs/bot.log`.
 
 ## Ajustar paràmetres
 
-Tot es controla des de `config.yaml`, amb comentaris a cada línia. **Es pot editar amb el bot en marxa**: es recarrega sol. Si t'equivoques de format, el bot ho avisa al log i manté la configuració anterior.
-
-Mètode recomanat per millorar resultats:
-1. Canvia **un sol paràmetre** cada vegada.
-2. Executa `python run_backtest.py` i compara amb el resultat anterior.
-3. Desconfia de millores espectaculars: sovint vol dir que l'estratègia s'ha ajustat massa al passat i no funcionarà en el futur. Prova el canvi també amb `--days 180` i `--days 730`.
-4. Només passa al bot en directe els canvis que milloren en tots els períodes.
-
-Paràmetres amb més impacte: `timeframe`, `stop_atr`, `take_profit_atr`, `rsi_long`, `min_edge_over_costs` i `risk_per_trade_pct`.
+- **Des del panell** (secció *Control*): la part del capital que fa servir i el fre d'emergència. També s'hi pot posar en pausa, reprendre, tancar-ho tot, rearmar després d'una aturada i reiniciar el compte simulat.
+- **A `config.yaml`** (a GitHub): la resta. Es recarrega sol; si hi ha un error de format, el bot ho avisa al log i continua amb l'anterior. Els paràmetres de l'estratègia estan fixats a propòsit: canviar-los després de veure resultats és la manera més ràpida d'enganyar-se.
 
 ## Tenir-lo encès 24/7 amb Render + GitHub (tot des de l'iPad)
 
@@ -82,14 +58,15 @@ El repositori ja inclou `render.yaml`, que ho configura tot sol.
 Obre l'adreça del servei (la trobaràs a dalt de tot a Render, acaba en `.onrender.com`). El navegador et demanarà usuari i contrasenya: l'usuari pot ser qualsevol, la contrasenya és la de `DASHBOARD_PASSWORD`.
 
 Hi veuràs:
-- Una columna de llum com la d'una màquina: verd = treballant, ambre = en pausa o sense notícies, vermell = aturat per seguretat.
-- El capital simulat, el rendiment total i d'avui, i la corba del capital.
-- Les posicions obertes, amb on és el preu entre el stop i l'objectiu.
-- **Què està vigilant:** cada valor amb el que el bot en pensa ara mateix i per què encara no entra.
-- Les últimes operacions amb el resultat i el motiu del tancament.
-- L'activitat recent i els paràmetres actius.
+- Una columna de llum: verd = treballant, ambre = en pausa o sense notícies, vermell = aturat pel fre d'emergència.
+- El capital simulat i el rendiment, comparat amb haver comprat Bitcoin el mateix dia que va començar el compte.
+- **Control:** pausa, reprendre, tancar-ho tot, rearmar, reiniciar el compte, i quina part del capital fa servir i on salta el fre.
+- Les posicions obertes, amb el stop i el nivell de sortida.
+- **Què està vigilant:** per a cada valor, a quin preu entraria en llarg o en curt.
+- **Com va respecte al laboratori:** guanyadores, guany i pèrdua mitjans i operacions per setmana, comparats amb el que va fer al laboratori.
+- Les últimes operacions, l'activitat recent i, plegat a baix, el laboratori.
 
-Es refresca sol cada 30 segons. A l'iPad o al mòbil, *Compartir → Afegir a la pantalla d'inici* el deixa com una app. El panell només mostra informació: no pot comprar ni vendre.
+Es refresca sol cada 30 segons. A l'iPad o al mòbil, *Compartir → Afegir a la pantalla d'inici* el deixa com una app.
 
 En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 
@@ -97,7 +74,7 @@ En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 - **Canviar paràmetres:** edita `config.yaml` directament a la web de GitHub (icona del llapis) i desa amb *Commit changes*. Render actualitza el bot sol en 1-2 minuts. El compte simulat es conserva, perquè està al disc persistent.
 - **Logs complets:** a Render, servei *cripto-bot-web* → pestanya **Logs**.
 - **Aturar-lo:** a Render, *Settings → Suspend Service*. Mentre està suspès no es cobra el servei.
-- **Rearmar després d'una aturada d'emergència:** pestanya **Shell** → `python status.py --reset-halt` i després *Manual Deploy → Restart service*.
+- **Rearmar després d'una aturada d'emergència:** botó *Rearma* al panell.
 
 ## Laboratori llarg/curt (des del panell)
 
@@ -147,15 +124,12 @@ journalctl -u cripto-bot -f        # veure el log en directe
 
 | Fase | Què | Criteri per passar a la següent |
 |---|---|---|
-| **1. Backtest** | Validar i ajustar amb 1-2 anys d'històric | Bat "comprar i mantenir" ajustat a risc, caiguda < 20% |
-| **2. Simulació en directe** (ara) | 2-3 mesos amb preus reals | Resultats coherents amb el backtest |
-| **3. Capital mínim real** | 200-500 € a Kraken amb claus d'API **sense permís de retirada** | 3 mesos positius després de costos |
-| **4. Escalar** | Augmentar capital gradualment | — |
-
-La fase 3 no està programada a propòsit: no s'ha d'activar fins que les fases 1 i 2 ho justifiquin.
+| **1. Laboratori** (fet) | Walk-forward, prova del mico i anys no vistos | Cap estratègia ho ha superat |
+| **2. Simulació en directe** (ara) | La tendència llarg/curt amb preus reals, uns 3-6 mesos | Comportament coherent amb el laboratori (veure el panell) |
+| **3. Diners reals** | No programat a propòsit | Només si hi hagués un avantatge demostrat, que ara no hi és |
 
 ## Avisos importants
 
 - Cap resultat passat garanteix resultats futurs. Les criptomonedes poden caure un 50% o més en poques setmanes.
-- A Espanya, cada venda amb guany o pèrdua tributa a l'IRPF. El fitxer `state/trades.csv` et servirà per a la declaració.
+- A Espanya, cada venda amb guany o pèrdua tributa a l'IRPF. El fitxer d'operacions (`state/operacions.csv`) serviria per a la declaració si mai s'operés amb diners reals.
 - Aquest programari és una eina, no assessorament financer.
