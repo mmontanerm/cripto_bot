@@ -485,13 +485,14 @@ async function startLab(passat){
 }
 const labSelect=cur=>{ const v=cur||15; return `<label for="lab-dd">Caiguda màxima que acceptes</label>
   <select id="lab-dd">${[5,10,15,25].map(x=>`<option value="${x}" ${x==v?"selected":""}>${x} %</option>`).join("")}</select>`; };
-const labIntro=`<p>Busca els millors paràmetres per guanyar <b>amb les pujades i amb les baixades</b> (posicions llargues i curtes) amb els 3 últims anys d'espelmes reals d'1 hora en BTC, ETH, SOL, XRP, DOGE i ADA. Prova tres famílies: <b>tendència</b> (ruptura de màxims i mínims), <b>reversió</b> (tornada a la mitjana de Bollinger) i <b>règim</b> (tria entre les dues segons si el mercat té tendència).</p>
+const labIntro=`<p>Busca els millors paràmetres per guanyar <b>amb les pujades i amb les baixades</b> (posicions llargues i curtes) amb els 3 últims anys d'espelmes reals d'1 hora en BTC, ETH, SOL, XRP, DOGE i ADA. Prova tres famílies: <b>tendència</b> (ruptura de màxims i mínims), <b>reversió</b> (tornada a la mitjana de Bollinger) i <b>règim</b> (tria entre les dues segons si el mercat té tendència). Cada estratègia es prova dues vegades: amb <b>mida fixa</b> i amb <b>mida segons la volatilitat</b> de cada moneda (cada posició es redueix perquè la seva volatilitat horària no passi del 0,5 %, sense apalancament).</p>
   <p>Costos reals: 0,14 % per operació (futurs, ordres a mercat), les posicions llargues paguen finançament i a les curtes no se'ls compta cap ingrés. Els stops s'executen al pitjor preu possible i, quan el bot canvia de paràmetres, paga tancar i reobrir.</p>
   <p><b>Com evita enganyar-se:</b> tria els paràmetres amb 6 mesos i els fa servir els 2 mesos següents, que no ha vist; avança i repeteix (walk-forward). No tria el pic sinó la zona estable de paràmetres. Compara el resultat amb 25 simulacions amb entrades a l'atzar (prova del mico). I guarda els 4 últims mesos sense tocar fins al final. Tarda uns 5-15 minuts.</p>
   <p class="sub" style="margin:0 0 8px">Criteri d'èxit, fixat abans de la prova: guanyar als períodes no vistos amb almenys 100 operacions, superar el 95 % de les simulacions a l'atzar, i guanyar als 4 mesos reservats sense passar de la caiguda acceptada.</p>`;
 const pastIntro=`<p>El laboratori principal només ha fet servir dades des de l'octubre del 2023. Aquesta prova agafa la <b>tendència llarg/curt</b> i la passa per anys que no ha vist mai: <b>del gener del 2020 al setembre del 2023</b>, que inclouen un mercat molt alcista (2021) i un de molt baixista (2022).</p>
-  <p><b>Res no s'ha ajustat després de veure els resultats anteriors:</b> mateixes regles, mateixos 24 paràmetres possibles, mateixos costos, mateixa prova del mico i mateix criteri d'èxit. Si torna a quedar per sobre del 95 % de les simulacions a l'atzar, hi haurà indicis seriosos d'avantatge; si no, el +46 % del laboratori principal va ser bàsicament sort. La primera vegada descarrega 4 anys de dades: tarda uns 5-10 minuts.</p>`;
+  <p><b>Res no s'ha ajustat després de veure els resultats anteriors:</b> mateixes regles, mateixos 24 paràmetres possibles, mateixos costos, mateixa prova del mico i mateix criteri d'èxit. Cada estratègia es prova dues vegades: amb <b>mida fixa</b> i amb <b>mida segons la volatilitat</b> de cada moneda (cada posició es redueix perquè la seva volatilitat horària no passi del 0,5 %, sense apalancament). Si torna a quedar per sobre del 95 % de les simulacions a l'atzar, hi haurà indicis seriosos d'avantatge; si no, el +46 % del laboratori principal va ser bàsicament sort. La primera vegada descarrega 4 anys de dades: tarda uns 5-10 minuts.</p>`;
 const famColor={tendencia:"#7A3E8E",reversio:"#C0702A",regim:"#2B7A78"};
+const fCol=f=>famColor[f.familia||f.id], fVol=f=>f.mida==="volatilitat";
 function labBlock(res, key){
   const F=res.families, W0=F[0].walk_forward, past=res.mode==="passat";
   const synth=res.dades_sintetiques?`<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>`:"";
@@ -506,20 +507,20 @@ function labBlock(res, key){
       <div class="sub" style="margin:0">${win?"Hi ha una estratègia que supera el criteri d'èxit":"Cap estratègia supera el criteri d'èxit"}</div>
       <h3>${win?esc(win.nom):"Sense avantatge demostrat"}</h3>
       <div class="sub" style="margin:0">${win?"Abans de fer-la servir amb diners, l'hem de provar en simulació en directe.":"El més prudent és no operar cap d'aquestes estratègies amb diners."}</div></div>`;
-  const cmp=`<div class="scroll"><table class="cmp wide"><thead><tr><th></th><th>No vist (${dmy(W0.des_de)} – ${dmy(W0.fins)})</th><th>Anual</th><th>Caiguda</th><th>Operacions/setmana</th><th>Atzar (95 %)</th><th>Reserva (4 mesos)</th></tr></thead><tbody>
-    ${F.map(f=>{const w=f.walk_forward,r=f.reserva,m=f.mico; return `<tr><td><span class="sw" style="background:${famColor[f.id]}"></span><b>${esc(f.nom)}</b>${f.superat?' <span class="applied">supera</span>':""}</td>
-      <td class="${sign(w.rendiment_pct)}"><b>${fmtP(w.rendiment_pct)}</b></td><td class="${sign(w.anual_pct)}">${fmtP(w.anual_pct)}</td><td>${fmtNum(w.caiguda_pct,1)} %</td>
+  const cmp=`<div class="scroll"><table class="cmp wide"><thead><tr><th></th><th>No vist (${dmy(W0.des_de)} – ${dmy(W0.fins)})</th><th>Anual</th><th>Caiguda</th><th>Guany / caiguda</th><th>Operacions/setmana</th><th>Atzar (95 %)</th><th>Reserva (4 mesos)</th></tr></thead><tbody>
+    ${F.map(f=>{const w=f.walk_forward,r=f.reserva,m=f.mico; return `<tr><td><span class="sw" style="background:${fCol(f)};${fVol(f)?"opacity:.5;outline:1.5px solid "+fCol(f):""}"></span><b>${esc(f.nom)}</b>${f.superat?' <span class="applied">supera</span>':""}</td>
+      <td class="${sign(w.rendiment_pct)}"><b>${fmtP(w.rendiment_pct)}</b></td><td class="${sign(w.anual_pct)}">${fmtP(w.anual_pct)}</td><td>${fmtNum(w.caiguda_pct,1)} %</td><td>${w.guany_per_caiguda==null?"—":fmtNum(w.guany_per_caiguda,2)}</td>
       <td>${fmtNum(w.operacions_setmana,1)}</td><td class="${sign(m.p95_pct)}">${fmtP(m.p95_pct)}</td><td class="${sign(r.rendiment_pct)}">${fmtP(r.rendiment_pct)}${r.aturada?' <span class="tag-s stop">aturada</span>':""}</td></tr>`;}).join("")}
-    <tr class="ref"><td>Comprar Bitcoin</td><td>${fmtP(res.btc.walk_forward_pct)}</td><td></td><td></td><td></td><td></td><td>${fmtP(res.btc.reserva_pct)}</td></tr></tbody></table></div>
-    <p class="note">"No vist": encadenament dels períodes de 2 mesos que l'estratègia no havia vist quan va triar els paràmetres. "Atzar (95 %)": el resultat que només supera 1 de cada 20 simulacions amb entrades a l'atzar i les mateixes sortides i costos; per demostrar avantatge cal superar-lo.</p>`;
+    <tr class="ref"><td>Comprar Bitcoin</td><td>${fmtP(res.btc.walk_forward_pct)}</td><td></td><td></td><td></td><td></td><td></td><td>${fmtP(res.btc.reserva_pct)}</td></tr></tbody></table></div>
+    <p class="note">"No vist": encadenament dels períodes de 2 mesos que l'estratègia no havia vist quan va triar els paràmetres. "Atzar (95 %)": el resultat que només supera 1 de cada 20 simulacions amb entrades a l'atzar i les mateixes sortides i costos; per demostrar avantatge cal superar-lo. "Guany / caiguda": guany total dividit per la pitjor caiguda; serveix per comparar la mida fixa amb la mida segons volatilitat, que fa servir menys diners.</p>`;
   const chart=`<div class="legend" id="lab-legend-${key}"></div><div id="labchart-${key}" style="height:230px;margin:12px -4px 4px;position:relative"></div>
-    <p class="note">1.000 € als períodes no vistos, encadenats. Mida fixa per operació (1/6 del capital per valor), sense apalancament.</p>`;
+    <p class="note">1.000 € als períodes no vistos, encadenats. Línia contínua: mida fixa (1/6 del capital per valor). Línia discontínua: mida segons volatilitat. Sense apalancament.</p>`;
   const fam=f=>{const w=f.walk_forward,r=f.reserva,m=f.mico;
     return `<details ${past?"open":""}><summary>${esc(f.nom)} ${f.superat?"· supera el criteri":"· no supera el criteri"}</summary>
       <p style="margin-top:6px">${esc(f.desc)}</p>
       <ul class="crit">${f.criteri.map(p=>`<li class="${p.ok?"ok":"ko"}">${esc(p.text)}</li>`).join("")}</ul>
       <div class="segs"><div class="seg"><span>No vist · ${dmy(w.des_de)} – ${dmy(w.fins)}</span><b class="${sign(w.rendiment_pct)}">${fmtP(w.rendiment_pct)}</b>
-        <small>${fmtNum(w.operacions,0)} operacions · ${w.llargues_pct==null?"—":fmtNum(w.llargues_pct,0)} % llargues</small><small>${w.canvis_parametres} canvis de paràmetres en ${w.finestres} períodes</small></div>
+        <small>${fmtNum(w.operacions,0)} operacions · ${w.llargues_pct==null?"—":fmtNum(w.llargues_pct,0)} % llargues</small><small>${w.canvis_parametres} canvis de paràmetres en ${w.finestres} períodes</small>${w.exposicio_mitjana_pct!=null?`<small>Cada posició fa servir de mitjana el ${fmtNum(w.exposicio_mitjana_pct,0)} % de la seva part del capital</small>`:""}</div>
       <div class="seg val"><span>Reserva · ${dmy(r.des_de)} – ${dmy(r.fins)}</span><b class="${sign(r.rendiment_pct)}">${fmtP(r.rendiment_pct)}</b>
         <small>caiguda ${fmtNum(r.caiguda_pct,1)} % · ${fmtNum(r.operacions,0)} operacions</small><small>${esc(r.parametres)}</small>${r.aturada?`<span class="tag-s stop">Aturada ${dmy(r.aturada)}</span>`:""}</div></div>
       <h3 class="lab-h3">Operació a operació (períodes no vistos)</h3><div class="scroll"><table class="cmp mid"><thead><tr><th>Guanyadores</th><th>Net de cada guanyadora</th><th>Net de cada perdedora</th><th>Net mitjà</th></tr></thead><tbody>
@@ -529,12 +530,12 @@ function labBlock(res, key){
         ${w.finestres_detall.map(x=>`<tr><td>${dmy(x.des_de)} – ${dmy(x.fins)}<span class="pm">${esc(x.parametres)}</span></td><td>${x.operacions}</td><td class="${sign(x.rendiment_pct)}">${fmtP(x.rendiment_pct)}</td></tr>`).join("")}</tbody></table></div>
     </details>`;};
   const html=synth+lateMsg+head+cmp+chart+(past?"":`<h3 class="lab-h3">Detall de cada estratègia</h3>`)+F.map(fam).join("");
-  const draw=()=>drawLines(`labchart-${key}`,`lab-legend-${key}`,[...F.map(f=>({nom:f.nom,c:famColor[f.id],pts:f.walk_forward.corba,w:1.8})),{nom:"Comprar Bitcoin",c:"var(--muted)",pts:res.btc.corba,w:1.2,dash:"5 4"}]);
+  const draw=()=>drawLines(`labchart-${key}`,`lab-legend-${key}`,[...F.map(f=>({nom:f.nom,c:fCol(f),pts:f.walk_forward.corba,w:fVol(f)?1.4:1.8,dash:fVol(f)?"7 3":""})),{nom:"Comprar Bitcoin",c:"var(--muted)",pts:res.btc.corba,w:1.2,dash:"5 4"}]);
   return {html, draw};
 }
 function renderLab(){
   const body=$("lab-body"); if(!lab) return;
-  const st=lab.estat||{}, res=lab.resultats?.versio===4?lab.resultats:null, past=lab.resultats_passat?.versio===4?lab.resultats_passat:null;
+  const st=lab.estat||{}, res=lab.resultats?.versio>=4?lab.resultats:null, past=lab.resultats_passat?.versio>=4?lab.resultats_passat:null;
   const running=st.estat==="descarregant"||st.estat==="provant", runPast=running&&st.mode==="passat";
   clearTimeout(labTimer); if(running) labTimer=setTimeout(loadLab,5000);
   const last=[res,past].filter(Boolean).map(r=>r.generat).sort().pop();

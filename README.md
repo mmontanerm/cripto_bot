@@ -108,6 +108,8 @@ Al panell hi ha un sol laboratori: busca paràmetres per guanyar **amb les pujad
 - **Reversió:** entra quan el preu surt de les bandes de Bollinger, apostant que torna a la mitjana; surt a la mitjana, amb el stop o al cap de 48 hores.
 - **Règim:** si el mercat té tendència (ràtio d'eficiència) opera la ruptura; si no, la reversió.
 
+**Dues mides de posició per a cada estratègia:** mida fixa (1/6 del capital per valor) i mida segons volatilitat (cada posició es redueix perquè la seva volatilitat horària no passi del 0,5 %, la de Bitcoin en un moment normal; sense apalancament). Per comparar-les, el panell mostra el guany dividit per la pitjor caiguda.
+
 **Costos, el més reals possible:** 0,14% per operació (futurs amb ordres a mercat: comissió + lliscament), les llargues paguen un 0,01% de finançament cada 8 hores i a les curtes no se'ls compta cap ingrés, stops al stop o pitjor si el preu salta, i cost de tancar i reobrir cada vegada que el bot canvia de paràmetres.
 
 **Com evita enganyar-se:**
