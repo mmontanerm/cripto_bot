@@ -1,18 +1,18 @@
-"""Laboratori de graella amb stop petit per lot, sobre ~6 anys de dades reals.
+"""Laboratori llarg/curt amb walk-forward, prova del mico i reserva final (3 anys de dades reals).
 
     python run_lab.py                # caiguda màxima acceptada: 15%
     python run_lab.py --dd 10        # més prudent
     python run_lab.py --synthetic    # dades inventades, només per comprovar que funciona
 
 Normalment es llança des del panell web (botó "Fes la prova").
-Els resultats es desen a state/lab/resultats_graella.json i es veuen al panell.
+Els resultats es desen a state/lab/resultats_wf.json i es veuen al panell.
 """
 import argparse
 import os
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-from bot import lab_grid  # noqa: E402
+from bot import lab_wf  # noqa: E402
 from bot.config import ConfigWatcher  # noqa: E402
 from bot.logsetup import setup  # noqa: E402
 
@@ -23,4 +23,4 @@ if __name__ == "__main__":
     a = ap.parse_args()
     setup("lab")
     cfg = ConfigWatcher("config.yaml").cfg
-    lab_grid.main(cfg, max(5.0, min(50.0, a.dd)), synthetic=a.synthetic)
+    lab_wf.main(cfg, max(5.0, min(50.0, a.dd)), synthetic=a.synthetic)

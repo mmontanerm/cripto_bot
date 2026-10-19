@@ -19,16 +19,17 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .lab_grid import DAYS as GRID_DAYS
+from .lab_wf import DAYS as LAB_DAYS
 from .paths import EQUITY, LAB_DIR, LOG_DIR, OVERRIDE, STATUS, TRADES
 
 log = logging.getLogger("panell")
 HTML_PATH = os.path.join(os.path.dirname(__file__), "static", "panell.html")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LAB_STATUS = os.path.join(LAB_DIR, "estat_graella.json")
-LAB_RESULTS = os.path.join(LAB_DIR, "resultats_graella.json")
+LAB_STATUS = os.path.join(LAB_DIR, "estat_wf.json")
+LAB_RESULTS = os.path.join(LAB_DIR, "resultats_wf.json")
 # Fitxers dels laboratoris retirats: s'esborren en arrencar perquè no quedi cap resultat antic
-OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json"]
+OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json",
+                 "estat_graella.json", "resultats_graella.json"]
 _lab_lock = threading.Lock()
 
 
@@ -117,7 +118,7 @@ def lab_start(dd: float) -> tuple[int, str]:
         subprocess.Popen([sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd)], cwd=ROOT,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
                          preexec_fn=lower_priority)
-        log.info("Laboratori de graella llançat des del panell (caiguda màxima acceptada %s%%)", dd)
+        log.info("Laboratori llarg/curt llançat des del panell (caiguda màxima acceptada %s%%)", dd)
         return 202, "Prova en marxa."
 
 
@@ -135,7 +136,7 @@ def cleanup_old_labs() -> None:
     cache = os.path.join(LAB_DIR, "dades")
     if os.path.isdir(cache):
         for f in os.listdir(cache):
-            if f"_15m_{GRID_DAYS}d" not in f:   # el laboratori actual: espelmes de 15 minuts dels 3 últims anys
+            if f"_15m_{LAB_DAYS}d" not in f:   # el laboratori actual: espelmes de 15 minuts dels 3 últims anys
                 os.remove(os.path.join(cache, f))
                 removed += 1
     if removed:

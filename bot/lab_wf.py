@@ -1,0 +1,507 @@
+"""Laboratori LLARG/CURT amb optimització WALK-FORWARD, prova del mico i reserva final.
+
+Objectiu: trobar paràmetres per a estratègies que guanyin tant amb pujades (llarg) com amb
+baixades (curt), sense que la sort de l'optimització ens enganyi.
+
+Dades: els 3 últims anys, espelmes d'1 hora (construïdes a partir de les de 15 minuts),
+BTC, ETH, SOL, XRP, DOGE i ADA. Sense apalancament: cada valor té 1/6 del capital.
+
+Costos, el més reals possible:
+  - Futurs amb ordres a mercat: 0,05% de comissió + 0,02% de lliscament a cada costat (0,14% per operació).
+  - Finançament: les posicions llargues paguen un 0,01% cada 8 hores; a les curtes no se'ls compta cap ingrés.
+  - Entrada a l'obertura de l'espelma següent al senyal. Stops dins l'espelma, al stop o pitjor si
+    l'espelma obre més enllà. Si el bot canvia de paràmetres, paga el cost de tancar i reobrir.
+
+Famílies (llarg i curt):
+  - Tendència: ruptura del màxim/mínim de les últimes N hores (canal de Donchian).
+  - Reversió: el preu surt de les bandes de Bollinger i s'aposta que torna a la mitjana.
+  - Règim: amb tendència (ràtio d'eficiència alta) opera la ruptura; sense, la reversió.
+
+Mètode:
+  1. WALK-FORWARD: tria paràmetres amb 6 mesos, els fa servir els 2 mesos següents (no vistos),
+     avança 2 mesos i repeteix. El resultat és l'encadenament dels períodes no vistos.
+  2. ALTIPLÀ: no tria el pic sinó la combinació que, juntament amb les veïnes, puntua millor.
+  3. PROVA DEL MICO: les mateixes sortides, costos i freqüència d'operacions, però entrades a l'atzar (25 cops).
+  4. RESERVA FINAL: els 4 últims mesos no es toquen fins al final i s'hi prova una sola vegada.
+
+Criteri d'èxit, FIXAT ABANS de la prova:
+  1. El resultat encadenat fora de mostra guanya diners, amb almenys 100 operacions.
+  2. Supera la prova del mico: millor que el 95% de les simulacions amb entrades a l'atzar.
+  3. Guanya diners a la reserva final sense passar de la caiguda acceptada ni fer saltar l'aturada.
+"""
+from __future__ import annotations
+
+import itertools
+import json
+import logging
+import os
+import time
+from datetime import datetime, timezone
+
+import numpy as np
+import pandas as pd
+
+from .data import fetch_history
+from .paths import LAB_DIR
+
+log = logging.getLogger("lab_wf")
+
+STATUS_FILE = os.path.join(LAB_DIR, "estat_wf.json")
+RESULTS_FILE = os.path.join(LAB_DIR, "resultats_wf.json")
+
+SRC_TF = "15m"
+DAYS = 1100                      # mateixes dades que el laboratori anterior (ja descarregades)
+SYMBOLS = ["BTC/EUR", "ETH/EUR", "SOL/EUR", "XRP/EUR", "DOGE/EUR", "ADA/EUR"]
+CAPITAL = 1000.0
+WARMUP = 200                     # espelmes d'1 h per escalfar indicadors
+COST_SIDE = 0.0007               # 0,05% comissió + 0,02% lliscament
+FUNDING_8H = 0.0001              # els llargs paguen 0,01% cada 8 h
+TRAIN_DAYS, TEST_DAYS, HOLDOUT_DAYS = 180, 60, 120
+MONKEY_RUNS = 25
+MIN_TRADES_TRAIN = 15
+MIN_TRADES_WF = 100
+REV_TIME = 48                    # sortida per temps de la reversió (hores)
+REGIME_STOP = 3.0
+
+FAMILIES = {
+    "tendencia": {"nom": "Tendència llarg/curt",
+                  "desc": "Compra quan el preu trenca el màxim de les últimes N hores i ven en curt quan trenca el mínim. Surt quan el preu trenca un canal més curt en contra o toca el stop.",
+                  "grid": {"N": [24, 48, 96, 168], "sortida": [0.25, 0.5], "stop": [2.0, 3.0, 4.0]}},
+    "reversio": {"nom": "Reversió llarg/curt",
+                 "desc": "Quan el preu surt de les bandes de Bollinger aposta que tornarà a la mitjana: compra si ha caigut massa i ven en curt si ha pujat massa. Surt a la mitjana, amb el stop o al cap de 48 hores.",
+                 "grid": {"n": [24, 48], "k": [2.0, 2.5, 3.0], "stop": [2.0, 3.0, 4.0]}},
+    "regim": {"nom": "Règim: tendència o reversió",
+              "desc": "Mesura si el mercat té tendència (ràtio d'eficiència de 48 hores). Si en té, opera la ruptura; si no, la reversió. Cada part fa servir la meitat del capital del valor.",
+              "grid": {"llindar": [0.2, 0.3, 0.4], "N": [48, 96], "k": [2.0, 2.5]}},
+}
+
+
+def write_status(**kw) -> None:
+    os.makedirs(LAB_DIR, exist_ok=True)
+    kw["actualitzat"] = datetime.now(timezone.utc).isoformat()
+    kw["pid"] = os.getpid()
+    tmp = STATUS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(kw, f, default=str)
+    os.replace(tmp, STATUS_FILE)
+
+
+# ------------------------------------------------------------------ indicadors (per valor)
+class Sym:
+    def __init__(self, df: pd.DataFrame):
+        self.idx = df.index
+        self.O, self.H, self.L, self.C = (df[c].to_numpy(float) for c in ("open", "high", "low", "close"))
+        c = df["close"]
+        prev = c.shift()
+        tr = pd.concat([df["high"] - df["low"], (df["high"] - prev).abs(), (df["low"] - prev).abs()], axis=1).max(axis=1)
+        self.atr = tr.ewm(alpha=1 / 24, adjust=False).mean().to_numpy()
+        net = (c - c.shift(48)).abs()
+        path = c.diff().abs().rolling(48).sum()
+        self.er = (net / path.replace(0, np.nan)).fillna(0).to_numpy()
+        self.df = df[["high", "low", "close"]]
+        self._cache: dict = {}
+
+    def donchian(self, n):
+        k = ("don", n)
+        if k not in self._cache:
+            self._cache[k] = (self.df["high"].rolling(n).max().shift(1).to_numpy(),
+                              self.df["low"].rolling(n).min().shift(1).to_numpy())
+        return self._cache[k]
+
+    def boll(self, n, kk):
+        key = ("bol", n)
+        if key not in self._cache:
+            c = self.df["close"]
+            self._cache[key] = (c.rolling(n).mean().to_numpy(), c.rolling(n).std().to_numpy())
+        ma, sd = self._cache[key]
+        return ma, ma - kk * sd, ma + kk * sd
+
+
+def trend_signals(s: Sym, N: int, frac: float):
+    hi, lo = s.donchian(N)
+    ehi, elo = s.donchian(max(2, int(N * frac)))
+    C = s.C
+    with np.errstate(invalid="ignore"):
+        entry = np.where(C > hi, 1, np.where(C < lo, -1, 0))
+        return entry, C < elo, C > ehi
+
+
+def rev_signals(s: Sym, n: int, k: float):
+    ma, lo, up = s.boll(n, k)
+    C = s.C
+    with np.errstate(invalid="ignore"):
+        entry = np.where(C < lo, 1, np.where(C > up, -1, 0))
+        return entry, C >= ma, C <= ma
+
+
+def _first(mask_fn, e: int, end: int):
+    """Primera espelma (des de e) on es compleix la condició, buscant per trams creixents (ràpid)."""
+    a, step = e, 256
+    while a < end:
+        b = min(end, a + step)
+        m = mask_fn(a, b)
+        if m.any():
+            return a + int(np.argmax(m))
+        a, step = b, step * 2
+    return None
+
+
+# ------------------------------------------------------------------ motor per esdeveniments
+def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: float = 1.0, rng=None):
+    """Una posició a la vegada per valor. Retorna les operacions: espelma d'entrada i de sortida,
+    direcció, rendiment net (amb comissions, lliscament i finançament), pitjor moment i pes.
+
+    Amb `rng` és la PROVA DEL MICO: primer es calcula l'estratègia real per saber quantes operacions fa
+    i quina part són llargues; després s'entra a l'atzar amb la mateixa freqüència i proporció,
+    i se surt exactament amb les mateixes regles (stop, senyal de sortida, temps) i costos."""
+    O, H, L, C, A = s.O, s.H, s.L, s.C, s.atr
+    n = len(C)
+    if rng is not None:
+        real = run(s, entry, exit_long, exit_short, stop_k, T, weight)
+        held = int((real[1] - real[0] + 1).sum())
+        flat = max(n - WARMUP - held, 1)
+        p_in = min(1.0, max(len(real[0]), 1) / flat)
+        p_long = float((real[2] > 0).mean()) if len(real[0]) else 0.5
+    else:
+        entry = entry.copy()
+        entry[:WARMUP] = 0
+        sig = np.nonzero(entry)[0]
+    out = [[] for _ in range(5)]
+    nxt = WARMUP
+    while True:
+        if rng is None:
+            j = int(np.searchsorted(sig, nxt))
+            if j >= len(sig):
+                break
+            i = int(sig[j])
+            d = int(entry[i])
+        else:
+            i = nxt + int(rng.geometric(p_in)) - 1
+            if i >= n:
+                break
+            d = 1 if rng.random() < p_long else -1
+        e = i + 1
+        if e >= n or not np.isfinite(A[i]) or A[i] <= 0:
+            nxt = i + 1
+            continue
+        ep = O[e]
+        sp = ep - d * stop_k * A[i]
+        end = min(n, e + T) if T else n
+        if d > 0:
+            a = _first(lambda u, v: L[u:v] <= sp, e, end)
+            b = _first(lambda u, v: exit_long[u:v], e, end)
+        else:
+            a = _first(lambda u, v: H[u:v] >= sp, e, end)
+            b = _first(lambda u, v: exit_short[u:v], e, end)
+        if a is not None and (b is None or a <= b):       # el stop dins l'espelma té prioritat
+            x = a
+            xp = sp if x == e else (min(O[x], sp) if d > 0 else max(O[x], sp))
+            last = x                                         # pitjor moment: espelmes fins a x-1 i el preu del stop
+        elif b is not None and b + 1 < n:                  # senyal al tancament: surt a l'obertura següent
+            x = b + 1
+            xp = O[x]
+            last = x
+        else:                                              # límit de temps o final de les dades
+            x = end - 1
+            xp = C[x]
+            last = x + 1
+        if d > 0:
+            worst = min(L[e:last].min() if last > e else xp, xp)
+        else:
+            worst = max(H[e:last].max() if last > e else xp, xp)
+        gross = d * (xp - ep) / ep
+        funding = FUNDING_8H * (x - e + 1) / 8 if d > 0 else 0.0
+        out[0].append(e)
+        out[1].append(x)
+        out[2].append(d)
+        out[3].append(gross - 2 * COST_SIDE - funding)
+        out[4].append(d * (worst - ep) / ep - COST_SIDE)
+        nxt = max(x, i + 1)
+    return (np.asarray(out[0], dtype=np.int64), np.asarray(out[1], dtype=np.int64), np.asarray(out[2], dtype=np.int8),
+            np.asarray(out[3], dtype=float), np.asarray(out[4], dtype=float), np.full(len(out[0]), weight))
+
+
+def combo_trades(syms: dict, fam: str, p: dict, rng=None) -> dict:
+    """Operacions de tots els valors per a una combinació. Pes = fracció del capital d'aquell valor."""
+    parts = []
+    for s in syms.values():
+        if fam == "tendencia":
+            en, xl, xs = trend_signals(s, p["N"], p["sortida"])
+            parts.append(run(s, en, xl, xs, p["stop"], 0, 1.0, rng))
+        elif fam == "reversio":
+            en, xl, xs = rev_signals(s, p["n"], p["k"])
+            parts.append(run(s, en, xl, xs, p["stop"], REV_TIME, 1.0, rng))
+        else:
+            en, xl, xs = trend_signals(s, p["N"], 0.5)
+            parts.append(run(s, np.where(s.er > p["llindar"], en, 0), xl, xs, REGIME_STOP, 0, 0.5, rng))
+            en, xl, xs = rev_signals(s, 24, p["k"])
+            parts.append(run(s, np.where(s.er <= p["llindar"], en, 0), xl, xs, REGIME_STOP, REV_TIME, 0.5, rng))
+    cols = list(zip(*parts))
+    out = {k: np.concatenate(v) for k, v in zip(("e", "x", "d", "net", "worst", "w"), cols)}
+    order = np.argsort(out["x"], kind="stable")
+    return {k: v[order] for k, v in out.items()}
+
+
+# ------------------------------------------------------------------ mètriques per període
+def period(tr: dict, i0: int, i1: int, notional: float, dd_limit=None, start=CAPITAL) -> dict:
+    """Operacions que TANQUEN dins [i0, i1). La caiguda inclou el pitjor moment de cada operació."""
+    m = (tr["x"] >= i0) & (tr["x"] < i1)
+    net = tr["net"][m] * tr["w"][m] * notional
+    worst = tr["worst"][m] * tr["w"][m] * notional
+    cum = start + np.cumsum(net)
+    pts = np.empty(2 * len(net) + 1)
+    pts[0] = start
+    pts[1::2] = cum - net + np.minimum(worst, 0)
+    pts[2::2] = cum
+    final = cum[-1] if len(cum) else start
+    stopped = None
+    if dd_limit is not None and len(net):
+        pk = np.maximum.accumulate(pts)
+        hit = np.nonzero(pts < pk * (1 - dd_limit))[0]
+        if len(hit):
+            h = int(hit[0])
+            final = pts[h]
+            stopped = int(tr["x"][m][(h - 1) // 2])
+            pts = pts[:h + 1]
+    pk = np.maximum.accumulate(pts)
+    dd = float(-(pts / pk - 1).min()) if len(pts) else 0.0
+    return {"pnl": float(final - start), "dd": dd, "n": int(m.sum()), "stopped_bar": stopped, "mask": m}
+
+
+def score(st: dict) -> float:
+    if st["n"] < MIN_TRADES_TRAIN:
+        return -5.0
+    pct = st["pnl"] / CAPITAL * 100
+    return float(np.clip(pct / max(st["dd"] * 100, 2.0), -5, 5))   # rendiment per cada punt de caiguda
+
+
+def neighbours(grid: dict) -> tuple[list, dict]:
+    keys = list(grid)
+    combos = list(itertools.product(*[range(len(grid[k])) for k in keys]))
+    pos = {c: i for i, c in enumerate(combos)}
+    nb = {i: [pos[c[:j] + (c[j] + s,) + c[j + 1:]] for j in range(len(keys)) for s in (-1, 1)
+              if 0 <= c[j] + s < len(grid[keys[j]])] for i, c in enumerate(combos)}
+    params = [{k: grid[k][c[j]] for j, k in enumerate(keys)} for c in combos]
+    return params, nb
+
+
+def choose(trades: list, nb: dict, i0: int, i1: int, notional: float) -> int:
+    raw = np.array([score(period(t, i0, i1, notional)) for t in trades])
+    plateau = np.array([(raw[i] + raw[nb[i]].sum()) / (1 + len(nb[i])) for i in range(len(raw))])
+    return int(np.argmax(plateau))
+
+
+def params_text(fam: str, p: dict) -> str:
+    if fam == "tendencia":
+        return f"canal de {p['N']} h, sortida amb canal de {max(2, int(p['N'] * p['sortida']))} h, stop {p['stop']:g}× ATR"
+    if fam == "reversio":
+        return f"Bollinger de {p['n']} h a {p['k']:g} desviacions, stop {p['stop']:g}× ATR"
+    return f"llindar de tendència {p['llindar']:g}, canal de {p['N']} h, Bollinger a {p['k']:g} desviacions"
+
+
+def _pct(v):
+    return round(float(v) * 100, 2) if v is not None else None
+
+
+def _thin(rows: list, n: int = 400) -> list:
+    if len(rows) <= n:
+        return rows
+    step = len(rows) / n
+    out = [rows[int(i * step)] for i in range(n)]
+    out[-1] = rows[-1]
+    return out
+
+
+def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict:
+    first = next(iter(syms.values()))
+    idx = first.idx
+    n = len(idx)
+    notional = CAPITAL / len(syms)
+    t_end = idx[-1] + pd.Timedelta(hours=1)
+    t_hold = t_end - pd.Timedelta(days=HOLDOUT_DAYS)
+    bar = lambda t: int(idx.searchsorted(t))             # noqa: E731
+    windows = []
+    ts = idx[WARMUP] + pd.Timedelta(days=TRAIN_DAYS)
+    while ts + pd.Timedelta(days=TEST_DAYS / 2) <= t_hold:
+        windows.append((ts - pd.Timedelta(days=TRAIN_DAYS), ts, min(ts + pd.Timedelta(days=TEST_DAYS), t_hold)))
+        ts += pd.Timedelta(days=TEST_DAYS)
+    if not windows:
+        raise RuntimeError("No hi ha prou dades per fer el walk-forward")
+    i_hold = bar(t_hold)
+    wf_from, wf_to = bar(windows[0][1]), bar(windows[-1][2])
+    years = max((windows[-1][2] - windows[0][1]).days / 365, 0.01)
+    hold_days = max((t_end - t_hold).days, 1)
+
+    total_steps = sum(len(list(itertools.product(*f["grid"].values()))) for f in FAMILIES.values()) + len(FAMILIES)
+    step = 0
+    fams_out = []
+    for fam, spec in FAMILIES.items():
+        params, nb = neighbours(spec["grid"])
+        trades = []
+        for p in params:
+            trades.append(combo_trades(syms, fam, p))
+            step += 1
+            progress(round(step / total_steps * 95, 1), f"{spec['nom']}: {params_text(fam, p)}")
+
+        # 1) Walk-forward: tria amb 6 mesos, opera els 2 següents
+        chosen, rows, nets, curve = [], [], [], [(str(windows[0][1].date()), CAPITAL)]
+        bal, prev, switch_cost, longs = CAPITAL, None, 0.0, 0
+        fees = funding = 0.0
+        for (a, b, c) in windows:
+            ci = choose(trades, nb, bar(a), bar(b), notional)
+            cost = CAPITAL * 2 * COST_SIDE if prev is not None and ci != prev else 0.0   # tancar i reobrir
+            cost = min(cost, max(bal, 0.0))
+            switch_cost += cost
+            bal -= cost
+            prev = ci
+            chosen.append(ci)
+            t = trades[ci]
+            st = period(t, bar(b), bar(c), notional)
+            m = st["mask"]
+            w = t["w"][m] * notional
+            seg = np.maximum(bal + np.cumsum(t["net"][m] * w), 0.0)
+            ruin = np.nonzero(seg <= 0)[0]
+            if len(ruin) or bal <= 0:                        # compte a zero: no es pot seguir operant
+                k = int(ruin[0]) + 1 if len(ruin) else 0
+                seg, m = seg[:k], m & (np.cumsum(m) <= k)
+                w = t["w"][m] * notional
+            curve += [(str(idx[x].date()), round(float(v), 2)) for x, v in zip(t["x"][m], seg)]
+            bal = 0.0 if bal <= 0 else (float(seg[-1]) if len(seg) else bal)
+            nets.append(t["net"][m])
+            longs += int((t["d"][m] > 0).sum())
+            fees += float((2 * COST_SIDE * w).sum())
+            held = (t["x"][m] - t["e"][m] + 1)
+            funding += float((FUNDING_8H * held / 8 * (t["d"][m] > 0) * w).sum())
+            rows.append({"des_de": str(b.date()), "fins": str(c.date()), "parametres": params_text(fam, params[ci]),
+                         "rendiment_pct": round((st["pnl"] - cost) / CAPITAL * 100, 1), "operacions": st["n"]})
+        vals = np.array([v for _, v in curve])
+        chain_pnl = bal - CAPITAL
+        chain_dd = float(-(vals / np.maximum.accumulate(vals) - 1).min())
+        nets = np.concatenate(nets)
+        chain_n = len(nets)
+
+        # 2) Prova del mico: mateixos paràmetres a cada finestra, entrades a l'atzar
+        monkey = []
+        for r in range(MONKEY_RUNS):
+            sims, pnl, prev = {}, 0.0, None
+            for wi, (a, b, c) in enumerate(windows):
+                ci = chosen[wi]
+                if ci not in sims:
+                    sims[ci] = combo_trades(syms, fam, params[ci], rng=np.random.default_rng(7919 * r + ci))
+                pnl += period(sims[ci], bar(b), bar(c), notional)["pnl"]
+                pnl -= CAPITAL * 2 * COST_SIDE if prev is not None and ci != prev else 0.0
+                prev = ci
+                if pnl <= -CAPITAL:                          # compte a zero
+                    pnl = -CAPITAL
+                    break
+            monkey.append(pnl)
+            progress(round((step + (r + 1) / MONKEY_RUNS) / total_steps * 95, 1),
+                     f"{spec['nom']}: prova del mico {r + 1}/{MONKEY_RUNS}")
+        monkey = np.asarray(monkey)
+        pctile = float((monkey < chain_pnl).mean() * 100)
+        step += 1
+
+        # 3) Reserva final: paràmetres triats amb els 6 mesos anteriors, provats una sola vegada
+        hi = choose(trades, nb, bar(t_hold - pd.Timedelta(days=TRAIN_DAYS)), i_hold, notional)
+        hold = period(trades[hi], i_hold, n, notional, dd_limit)
+        hnets = trades[hi]["net"][hold["mask"]]
+
+        ok1 = bool(chain_pnl > 0 and chain_n >= MIN_TRADES_WF)
+        ok2 = bool(pctile >= 95)
+        ok3 = bool(hold["pnl"] > 0 and hold["stopped_bar"] is None and hold["dd"] <= dd_limit)
+        fams_out.append({
+            "id": fam, "nom": spec["nom"], "desc": spec["desc"], "combinacions": len(params),
+            "walk_forward": {
+                "des_de": str(windows[0][1].date()), "fins": str(windows[-1][2].date()), "finestres": len(windows),
+                "rendiment_pct": round(chain_pnl / CAPITAL * 100, 1),
+                "anual_pct": round(((max(bal, 0.01) / CAPITAL) ** (1 / years) - 1) * 100, 1),
+                "caiguda_pct": round(chain_dd * 100, 1), "operacions": chain_n,
+                "operacions_setmana": round(chain_n / (years * 52), 1),
+                "llargues_pct": round(longs / chain_n * 100) if chain_n else None,
+                "guanyadores_pct": round(float((nets > 0).mean() * 100), 1) if chain_n else None,
+                "net_mitja_pct": round(float(nets.mean() * 100), 3) if chain_n else None,
+                "net_guanyadora_pct": _pct(nets[nets > 0].mean()) if (nets > 0).any() else None,
+                "net_perdedora_pct": _pct(nets[nets <= 0].mean()) if (nets <= 0).any() else None,
+                "comissions_eur": round(fees, 2), "financament_eur": round(funding, 2),
+                "cost_canvis_eur": round(switch_cost, 2),
+                "canvis_parametres": sum(1 for i in range(1, len(chosen)) if chosen[i] != chosen[i - 1]),
+                "finestres_detall": rows,
+                "corba": _thin(curve),
+            },
+            "mico": {"execucions": MONKEY_RUNS, "mediana_pct": round(float(np.median(monkey)) / CAPITAL * 100, 1),
+                     "p95_pct": round(float(np.percentile(monkey, 95)) / CAPITAL * 100, 1),
+                     "millor_pct": round(float(monkey.max()) / CAPITAL * 100, 1),
+                     "pitjor_pct": round(float(monkey.min()) / CAPITAL * 100, 1),
+                     "percentil_real": round(pctile)},
+            "reserva": {"des_de": str(t_hold.date()), "fins": str(idx[-1].date()), "parametres": params_text(fam, params[hi]),
+                        "rendiment_pct": round(hold["pnl"] / CAPITAL * 100, 1), "caiguda_pct": round(hold["dd"] * 100, 1),
+                        "operacions": hold["n"], "operacions_setmana": round(hold["n"] / (hold_days / 7), 1),
+                        "aturada": str(idx[hold["stopped_bar"]].date()) if hold["stopped_bar"] is not None else None,
+                        "guanyadores_pct": round(float((hnets > 0).mean() * 100), 1) if len(hnets) else None},
+            "criteri": [{"text": f"Guanya diners als períodes no vistos, amb almenys {MIN_TRADES_WF} operacions ({chain_n} operacions, {chain_pnl / CAPITAL * 100:+.1f} %)", "ok": ok1},
+                        {"text": f"Supera la prova del mico: millor que el 95 % de les simulacions amb entrades a l'atzar (millor que el {pctile:.0f} %)", "ok": ok2},
+                        {"text": f"Guanya a la reserva final sense passar del {round(dd_limit * 100)} % de caiguda ni fer saltar l'aturada ({hold['pnl'] / CAPITAL * 100:+.1f} %)", "ok": ok3}],
+            "superat": bool(ok1 and ok2 and ok3),
+        })
+
+    btc = syms["BTC/EUR"].C if "BTC/EUR" in syms else first.C
+    btc_curve = _thin([(str(idx[i].date()), round(float(CAPITAL * btc[i] / btc[wf_from]), 2)) for i in range(wf_from, wf_to, 6)])
+    best = [f for f in fams_out if f["superat"]]
+    return {
+        "versio": 4,
+        "generat": datetime.now(timezone.utc).isoformat(),
+        "periode": {"des_de": str(idx[WARMUP].date()), "fins": str(idx[-1].date())},
+        "valors": [s.replace("/EUR", "") for s in syms],
+        "costos": {"operacio_pct": round(2 * COST_SIDE * 100, 2), "financament_8h_pct": FUNDING_8H * 100},
+        "metode": {"entrenament_dies": TRAIN_DAYS, "prova_dies": TEST_DAYS, "reserva_dies": HOLDOUT_DAYS, "mico": MONKEY_RUNS},
+        "caiguda_maxima_acceptada_pct": round(dd_limit * 100),
+        "families": fams_out,
+        "btc": {"walk_forward_pct": round(float(btc[wf_to - 1] / btc[wf_from] - 1) * 100, 1),
+                "reserva_pct": round(float(btc[-1] / btc[i_hold] - 1) * 100, 1), "corba": btc_curve},
+        "guanyadora": max(best, key=lambda f: f["walk_forward"]["rendiment_pct"])["id"] if best else None,
+    }
+
+
+def load(synthetic: bool = False) -> dict:
+    if synthetic:
+        import run_backtest as rb
+        raw = rb.synthetic(SYMBOLS, SRC_TF, DAYS, seed=13)
+    else:
+        raw = {}
+        cache = os.path.join(LAB_DIR, "dades")
+        for k, s in enumerate(SYMBOLS):
+            write_status(estat="descarregant", pct=round(k / len(SYMBOLS) * 100, 1),
+                         missatge=f"Carregant 3 anys d'espelmes de {s.replace('/EUR', '')}")
+            try:
+                raw[s] = fetch_history(s, SRC_TF, DAYS, cache_dir=cache, quote="USDT")
+            except Exception as e:
+                log.warning("Salto %s: %s", s, e)
+        if "BTC/EUR" not in raw:
+            raise RuntimeError("No s'han pogut carregar les dades de Bitcoin")
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    base = raw["BTC/EUR"].resample("1h").agg(agg).dropna().index
+    syms = {}
+    for s in list(raw):
+        h = raw.pop(s).resample("1h").agg(agg).dropna()
+        syms[s] = Sym(h.reindex(base).ffill().bfill())
+    return syms
+
+
+def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False) -> dict:
+    t0 = time.time()
+    write_status(estat="descarregant", pct=0, missatge="Preparant les dades")
+    try:
+        syms = load(synthetic)
+        res = run_lab(syms, dd_limit_pct / 100, lambda pct, msg: write_status(estat="provant", pct=pct, missatge=msg))
+        res["durada_min"] = round((time.time() - t0) / 60, 1)
+        res["dades_sintetiques"] = synthetic
+        tmp = RESULTS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(res, f, default=str)
+        os.replace(tmp, RESULTS_FILE)
+        write_status(estat="fet", pct=100, missatge=f"Prova acabada en {res['durada_min']} minuts")
+        return res
+    except Exception as e:
+        log.exception("El laboratori ha fallat")
+        write_status(estat="error", pct=0, missatge=f"La prova ha fallat: {e}")
+        raise

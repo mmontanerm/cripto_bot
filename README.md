@@ -99,19 +99,27 @@ En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 - **Aturar-lo:** a Render, *Settings → Suspend Service*. Mentre està suspès no es cobra el servei.
 - **Rearmar després d'una aturada d'emergència:** pestanya **Shell** → `python status.py --reset-halt` i després *Manual Deploy → Restart service*.
 
-## Laboratori de graella (des del panell)
+## Laboratori llarg/curt (des del panell)
 
-Al panell hi ha un sol laboratori: una **graella amb stop petit per lot**, provada sobre els 3 últims anys d'espelmes reals de 15 minuts en BTC, ETH, SOL, XRP, DOGE i ADA.
+Al panell hi ha un sol laboratori: busca paràmetres per guanyar **amb les pujades i amb les baixades** (posicions llargues i curtes), amb els 3 últims anys d'espelmes reals d'1 hora en BTC, ETH, SOL, XRP, DOGE i ADA. Sense apalancament: cada valor fa servir 1/6 del capital.
 
-- **L'esglaó** és el guany net desitjat (0,3%, 0,4% o 0,5%) més els costos (0,14% per operació, futurs amb ordres a mercat). Cada lot venut a l'objectiu deixa exactament aquest guany net.
-- **Stop per lot:** cada lot es ven si cau 1, 2 o 3 esglaons per sota del seu preu de compra. Un nivell parat no torna a comprar fins que el preu el recupera.
-- **Filtre de tendència opcional:** només compra quan el preu és per sobre de la seva mitjana de 200 espelmes.
-- **36 combinacions.** Es tria la millor amb els 2 primers anys (entrenament) i es prova amb l'últim any, que no ha vist mai (validació).
+**Tres famílies d'estratègia (54 combinacions):**
+- **Tendència:** entra quan el preu trenca el màxim o el mínim de les últimes N hores; surt amb un canal més curt en contra o amb el stop (múltiple de l'ATR).
+- **Reversió:** entra quan el preu surt de les bandes de Bollinger, apostant que torna a la mitjana; surt a la mitjana, amb el stop o al cap de 48 hores.
+- **Règim:** si el mercat té tendència (ràtio d'eficiència) opera la ruptura; si no, la reversió.
+
+**Costos, el més reals possible:** 0,14% per operació (futurs amb ordres a mercat: comissió + lliscament), les llargues paguen un 0,01% de finançament cada 8 hores i a les curtes no se'ls compta cap ingrés, stops al stop o pitjor si el preu salta, i cost de tancar i reobrir cada vegada que el bot canvia de paràmetres.
+
+**Com evita enganyar-se:**
+1. **Walk-forward:** tria els paràmetres amb 6 mesos i els fa servir els 2 mesos següents, que no ha vist; avança 2 mesos i repeteix.
+2. **Altiplà:** tria la combinació que puntua millor juntament amb les veïnes, no el pic aïllat.
+3. **Prova del mico:** 25 simulacions amb entrades a l'atzar, la mateixa freqüència i les mateixes sortides i costos.
+4. **Reserva final:** els 4 últims mesos no es fan servir fins al final i s'hi prova una sola vegada, amb l'aturada per caiguda màxima.
 
 **Criteri d'èxit fixat abans de la prova:**
-1. guanyar diners a l'entrenament i a la validació;
-2. no passar de la caiguda acceptada a la validació ni fer saltar l'aturada;
-3. que almenys 7 de les 10 millors combinacions de l'entrenament també guanyin a la validació.
+1. guanyar als períodes no vistos, amb almenys 100 operacions;
+2. superar el 95% de les simulacions amb entrades a l'atzar;
+3. guanyar a la reserva final sense passar de la caiguda acceptada ni fer saltar l'aturada.
 
 En local: `python run_lab.py --dd 15`. Els laboratoris anteriors s'han retirat: en arrencar, el panell n'esborra els resultats i les dades que quedin al disc.
 
