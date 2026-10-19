@@ -140,3 +140,37 @@ def load_csv(path: str) -> pd.DataFrame:
     """Carrega espelmes d'un CSV propi (columnes: ts, open, high, low, close, volume)."""
     df = pd.read_csv(path, index_col=0, parse_dates=True)
     return df[COLS].astype(float)
+
+
+def fetch_range(symbol: str, timeframe: str, start: str, end: str, cache_dir: str = "data",
+                quote: str = "USDT") -> pd.DataFrame:
+    """Històric de Binance entre dues dates fixes (p. ex. "2020-01-01" i "2023-10-01").
+
+    Com que el passat no canvia, la caché a disc no caduca. Si el valor encara no cotitzava a
+    l'inici, retorna les dades des del primer dia que va cotitzar.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    base = symbol.split("/")[0]
+    sym = f"{base}{quote}"
+    cache = os.path.join(cache_dir, f"{sym}_{timeframe}_{start}_{end}.csv")
+    if os.path.exists(cache):
+        return pd.read_csv(cache, index_col=0, parse_dates=True)
+    t0 = int(pd.Timestamp(start, tz="UTC").timestamp() * 1000)
+    t1 = int(pd.Timestamp(end, tz="UTC").timestamp() * 1000)
+    rows: list = []
+    while t0 < t1:
+        batch = _binance({"symbol": sym, "interval": timeframe, "startTime": t0, "endTime": t1 - 1, "limit": 1000})
+        if not batch:
+            break
+        rows.extend(batch)
+        t0 = batch[-1][0] + 1
+        time.sleep(0.15)
+    if not rows:
+        raise KeyError(f"{symbol}: sense dades a Binance entre {start} i {end}")
+    df = pd.DataFrame(rows).iloc[:, :6]
+    df.columns = ["ts"] + COLS
+    df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+    df = df.set_index("ts").astype(float)
+    df = df[~df.index.duplicated()]
+    df.to_csv(cache)
+    return df

@@ -121,6 +121,8 @@ Al panell hi ha un sol laboratori: busca paràmetres per guanyar **amb les pujad
 2. superar el 95% de les simulacions amb entrades a l'atzar;
 3. guanyar a la reserva final sense passar de la caiguda acceptada ni fer saltar l'aturada.
 
+**Prova amb anys no vistos (2020–2023):** la tendència llarg/curt, amb exactament les mateixes regles, paràmetres possibles, costos i criteri, sobre dades que el laboratori principal no ha fet servir mai (gener del 2020 – setembre del 2023, amb el mercat alcista del 2021 i el baixista del 2022). Fixada abans de veure'n el resultat. Botó "Fes la prova 2020–2023" al panell, o `python run_lab.py --passat`.
+
 En local: `python run_lab.py --dd 15`. Els laboratoris anteriors s'han retirat: en arrencar, el panell n'esborra els resultats i les dades que quedin al disc.
 
 ## Altres maneres de tenir-lo encès 24/7

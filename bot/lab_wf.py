@@ -41,13 +41,20 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from .data import fetch_history
+from .data import fetch_history, fetch_range
 from .paths import LAB_DIR
 
 log = logging.getLogger("lab_wf")
 
 STATUS_FILE = os.path.join(LAB_DIR, "estat_wf.json")
 RESULTS_FILE = os.path.join(LAB_DIR, "resultats_wf.json")
+RESULTS_PAST_FILE = os.path.join(LAB_DIR, "resultats_wf_passat.json")
+
+# PROVA AMB DADES DEL PASSAT: la família de tendència, amb EXACTAMENT les mateixes regles, paràmetres
+# possibles i criteri, sobre anys que el laboratori principal no ha fet servir mai (abans d'octubre del 2023).
+# Inclou un mercat molt alcista (2021) i un de molt baixista (2022). Fixat el 19-10-2026, abans de veure'n el resultat.
+PAST_START, PAST_END = "2020-01-01", "2023-10-01"
+PAST_FAMILIES = ["tendencia"]
 
 SRC_TF = "15m"
 DAYS = 1100                      # mateixes dades que el laboratori anterior (ja descarregades)
@@ -156,18 +163,19 @@ def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: flo
     i se surt exactament amb les mateixes regles (stop, senyal de sortida, temps) i costos."""
     O, H, L, C, A = s.O, s.H, s.L, s.C, s.atr
     n = len(C)
+    start = int(np.argmax(np.isfinite(C))) + WARMUP     # escalfament comptat des del primer dia que cotitza
     if rng is not None:
         real = run(s, entry, exit_long, exit_short, stop_k, T, weight)
         held = int((real[1] - real[0] + 1).sum())
-        flat = max(n - WARMUP - held, 1)
+        flat = max(n - start - held, 1)
         p_in = min(1.0, max(len(real[0]), 1) / flat)
         p_long = float((real[2] > 0).mean()) if len(real[0]) else 0.5
     else:
         entry = entry.copy()
-        entry[:WARMUP] = 0
+        entry[:start] = 0
         sig = np.nonzero(entry)[0]
     out = [[] for _ in range(5)]
-    nxt = WARMUP
+    nxt = start
     while True:
         if rng is None:
             j = int(np.searchsorted(sig, nxt))
@@ -181,7 +189,7 @@ def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: flo
                 break
             d = 1 if rng.random() < p_long else -1
         e = i + 1
-        if e >= n or not np.isfinite(A[i]) or A[i] <= 0:
+        if e >= n or not np.isfinite(A[i]) or A[i] <= 0 or not np.isfinite(O[e]):
             nxt = i + 1
             continue
         ep = O[e]
@@ -312,7 +320,8 @@ def _thin(rows: list, n: int = 400) -> list:
     return out
 
 
-def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict:
+def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, families=None) -> dict:
+    fams = {k: v for k, v in FAMILIES.items() if families is None or k in families}
     first = next(iter(syms.values()))
     idx = first.idx
     n = len(idx)
@@ -332,10 +341,10 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict
     years = max((windows[-1][2] - windows[0][1]).days / 365, 0.01)
     hold_days = max((t_end - t_hold).days, 1)
 
-    total_steps = sum(len(list(itertools.product(*f["grid"].values()))) for f in FAMILIES.values()) + len(FAMILIES)
+    total_steps = sum(len(list(itertools.product(*f["grid"].values()))) for f in fams.values()) + len(fams)
     step = 0
     fams_out = []
-    for fam, spec in FAMILIES.items():
+    for fam, spec in fams.items():
         params, nb = neighbours(spec["grid"])
         trades = []
         for p in params:
@@ -446,12 +455,15 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict
 
     btc = syms["BTC/EUR"].C if "BTC/EUR" in syms else first.C
     btc_curve = _thin([(str(idx[i].date()), round(float(CAPITAL * btc[i] / btc[wf_from]), 2)) for i in range(wf_from, wf_to, 6)])
+    listed = {s.replace("/EUR", ""): str(v.idx[int(np.argmax(np.isfinite(v.C)))].date()) for s, v in syms.items()
+              if not np.isfinite(v.C[0])}                   # valors que encara no cotitzaven a l'inici
     best = [f for f in fams_out if f["superat"]]
     return {
         "versio": 4,
         "generat": datetime.now(timezone.utc).isoformat(),
         "periode": {"des_de": str(idx[WARMUP].date()), "fins": str(idx[-1].date())},
         "valors": [s.replace("/EUR", "") for s in syms],
+        "cotitzen_des_de": listed,
         "costos": {"operacio_pct": round(2 * COST_SIDE * 100, 2), "financament_8h_pct": FUNDING_8H * 100},
         "metode": {"entrenament_dies": TRAIN_DAYS, "prova_dies": TEST_DAYS, "reserva_dies": HOLDOUT_DAYS, "mico": MONKEY_RUNS},
         "caiguda_maxima_acceptada_pct": round(dd_limit * 100),
@@ -460,6 +472,29 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict
                 "reserva_pct": round(float(btc[-1] / btc[i_hold] - 1) * 100, 1), "corba": btc_curve},
         "guanyadora": max(best, key=lambda f: f["walk_forward"]["rendiment_pct"])["id"] if best else None,
     }
+
+
+def load_past(synthetic: bool = False) -> dict:
+    """1 hora, de PAST_START a PAST_END. Sense omplir enrere: abans de cotitzar, el valor no opera."""
+    if synthetic:
+        import run_backtest as rb
+        raw = {s: df.resample("1h").agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna()
+               for s, df in rb.synthetic(SYMBOLS, "1h", 1370, seed=29).items()}
+        raw["SOL/EUR"] = raw["SOL/EUR"].iloc[5000:]          # simula un valor que comença a cotitzar més tard
+    else:
+        raw = {}
+        cache = os.path.join(LAB_DIR, "dades")
+        for k, s in enumerate(SYMBOLS):
+            write_status(estat="descarregant", mode="passat", pct=round(k / len(SYMBOLS) * 100, 1),
+                         missatge=f"Descarregant {s.replace('/EUR', '')} del {PAST_START[:4]} al {PAST_END[:4]}")
+            try:
+                raw[s] = fetch_range(s, "1h", PAST_START, PAST_END, cache_dir=cache, quote="USDT")
+            except Exception as e:
+                log.warning("Salto %s: %s", s, e)
+        if "BTC/EUR" not in raw:
+            raise RuntimeError("No s'han pogut carregar les dades de Bitcoin")
+    base = raw["BTC/EUR"].index
+    return {s: Sym(raw.pop(s).reindex(base).ffill()) for s in list(raw)}   # el ffill no omple abans del primer preu
 
 
 def load(synthetic: bool = False) -> dict:
@@ -487,19 +522,23 @@ def load(synthetic: bool = False) -> dict:
     return syms
 
 
-def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False) -> dict:
+def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = False) -> dict:
     t0 = time.time()
-    write_status(estat="descarregant", pct=0, missatge="Preparant les dades")
+    mode = "passat" if past else "actual"
+    write_status(estat="descarregant", mode=mode, pct=0, missatge="Preparant les dades")
     try:
-        syms = load(synthetic)
-        res = run_lab(syms, dd_limit_pct / 100, lambda pct, msg: write_status(estat="provant", pct=pct, missatge=msg))
+        syms = load_past(synthetic) if past else load(synthetic)
+        res = run_lab(syms, dd_limit_pct / 100, lambda pct, msg: write_status(estat="provant", mode=mode, pct=pct, missatge=msg),
+                      families=PAST_FAMILIES if past else None)
+        res["mode"] = mode
         res["durada_min"] = round((time.time() - t0) / 60, 1)
         res["dades_sintetiques"] = synthetic
-        tmp = RESULTS_FILE + ".tmp"
+        out = RESULTS_PAST_FILE if past else RESULTS_FILE
+        tmp = out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(res, f, default=str)
-        os.replace(tmp, RESULTS_FILE)
-        write_status(estat="fet", pct=100, missatge=f"Prova acabada en {res['durada_min']} minuts")
+        os.replace(tmp, out)
+        write_status(estat="fet", mode=mode, pct=100, missatge=f"Prova acabada en {res['durada_min']} minuts")
         return res
     except Exception as e:
         log.exception("El laboratori ha fallat")
