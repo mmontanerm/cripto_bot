@@ -12,8 +12,11 @@ Com funciona la graella:
   - Filtre de tendència opcional: només compra quan el preu és per sobre de la seva mitjana
     de 200 espelmes (unes 50 hores).
 
-Execució prudent amb espelmes de 15 minuts: compres i stops dins l'espelma (stop al pitjor preu si
-l'espelma obre per sota); un lot comprat no es pot vendre fins a l'espelma següent.
+Execució amb espelmes de 15 minuts, com ordres limitades reals:
+  - les compres s'executen exactament al nivell i les vendes exactament a l'objectiu (mai a un preu millor);
+  - els stops s'executen al stop o pitjor si l'espelma obre per sota;
+  - si dins una espelma es podien tocar el stop i l'objectiu, es compta el stop (prudent);
+  - un lot comprat i que tanca la mateixa espelma per sobre de l'objectiu es ven en aquella espelma.
 
 Mètode:
   - ENTRENAMENT: els 2 primers anys dels 3 últims. Es tria la millor combinació.
@@ -74,7 +77,7 @@ def write_status(**kw) -> None:
 
 
 # ------------------------------------------------------------------ motor de graella (per esdeveniments)
-def run_grid(O, H, L, C, trend_ok, step: float, levels: int, stop_k: int, use_filter: bool):
+def run_grid(O, H, L, C, trend_ok, step: float, levels: int, stop_k: int, use_filter: bool, exact: bool = True):
     """Simula la graella en un valor amb capital 1 (cada lot = 1/levels).
 
     Retorna:
@@ -133,7 +136,8 @@ def run_grid(O, H, L, C, trend_ok, step: float, levels: int, stop_k: int, use_fi
             px, q, b, sp = held[j]
             target = lv[j] * (1 + step)
             if b < i and h >= target:
-                sell = max(o, target)
+                # Ordre limitada: s'executa exactament a l'objectiu, mai a un preu millor
+                sell = target if exact else max(o, target)
                 realized += q * (sell - px)
                 turnover += q * sell
                 q_tot -= q
@@ -149,7 +153,9 @@ def run_grid(O, H, L, C, trend_ok, step: float, levels: int, stop_k: int, use_fi
         if can_buy:
             for j in range(levels):
                 if armed[j] and j not in held and lo <= lv[j]:
-                    px = min(o, lv[j])
+                    # Ordre limitada al nivell; només si tota l'espelma és per sota (ordre per sobre del
+                    # mercat, p. ex. quan el filtre de tendència torna a permetre comprar) s'executa a l'obertura
+                    px = (lv[j] if h >= lv[j] else o) if exact else min(o, lv[j])
                     q = lot / px
                     sp = px * (1 - stop_k * step)
                     turnover += lot
@@ -159,6 +165,14 @@ def run_grid(O, H, L, C, trend_ok, step: float, levels: int, stop_k: int, use_fi
                         turnover += q * sp
                         trades.append((i, i, (sp - px) / px, "stop"))
                         armed[j] = False
+                        continue
+                    if exact and c >= lv[j] * (1 + step):
+                        # El mínim sempre és anterior al tancament: si tanca per sobre de l'objectiu,
+                        # la venda limitada s'ha executat dins la mateixa espelma
+                        sell = lv[j] * (1 + step)
+                        realized += q * (sell - px)
+                        turnover += q * sell
+                        trades.append((i, i, (sell - px) / px, "objectiu"))
                         continue
                     held[j] = [px, q, i, sp]
                     q_tot += q
