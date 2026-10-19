@@ -19,19 +19,15 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import yaml
-
 from .paths import EQUITY, LAB_DIR, LOG_DIR, OVERRIDE, STATUS, TRADES
 
 log = logging.getLogger("panell")
 HTML_PATH = os.path.join(os.path.dirname(__file__), "static", "panell.html")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LAB_STATUS = os.path.join(LAB_DIR, "estat.json")
-LAB_RESULTS = os.path.join(LAB_DIR, "resultats.json")
-LC_STATUS = os.path.join(LAB_DIR, "estat_lc.json")
-LC_RESULTS = os.path.join(LAB_DIR, "resultats_lc.json")
-FILES = {"llarg": (LAB_STATUS, LAB_RESULTS), "lc": (LC_STATUS, LC_RESULTS),
-         "ct": (os.path.join(LAB_DIR, "estat_ct.json"), os.path.join(LAB_DIR, "resultats_ct.json"))}
+LAB_STATUS = os.path.join(LAB_DIR, "estat_graella.json")
+LAB_RESULTS = os.path.join(LAB_DIR, "resultats_graella.json")
+# Fitxers dels laboratoris retirats: s'esborren en arrencar perquè no quedi cap resultat antic
+OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json"]
 _lab_lock = threading.Lock()
 
 
@@ -102,68 +98,47 @@ def _status(path: str) -> dict:
     return st
 
 
-def lab_state(tipus: str = "llarg") -> dict:
-    status_file, results_file = FILES.get(tipus, FILES["llarg"])
-    override = None
-    if os.path.exists(OVERRIDE):
-        try:
-            with open(OVERRIDE, encoding="utf-8") as f:
-                override = yaml.safe_load(f)
-        except Exception:
-            override = None
-    return {"estat": _status(status_file), "resultats": _read_json(results_file) or None, "aplicada": override}
+def lab_state() -> dict:
+    return {"estat": _status(LAB_STATUS), "resultats": _read_json(LAB_RESULTS) or None}
 
 
-def lab_start(dd: float, tipus: str = "llarg") -> tuple[int, str]:
-    tipus = tipus if tipus in FILES else "llarg"
+def lab_start(dd: float) -> tuple[int, str]:
     with _lab_lock:
-        # Una sola prova alhora, sigui del tipus que sigui (memòria i CPU limitades a Render)
-        for sf, _ in FILES.values():
-            if _status(sf).get("estat") in ("descarregant", "provant"):
-                return 409, "Ja hi ha una prova en marxa. Espera que acabi."
+        if _status(LAB_STATUS).get("estat") in ("descarregant", "provant"):
+            return 409, "Ja hi ha una prova en marxa. Espera que acabi."
         os.makedirs(LAB_DIR, exist_ok=True)
-        with open(FILES[tipus][0], "w", encoding="utf-8") as f:
+        with open(LAB_STATUS, "w", encoding="utf-8") as f:
             json.dump({"estat": "descarregant", "pct": 0, "missatge": "Arrencant la prova",
                        "actualitzat": datetime.now(timezone.utc).isoformat(), "pid": os.getpid()}, f)
 
         def lower_priority():  # que el laboratori no alenteixi el bot
             os.nice(10)
-        subprocess.Popen([sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd), "--tipus", tipus], cwd=ROOT,
+        subprocess.Popen([sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd)], cwd=ROOT,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
                          preexec_fn=lower_priority)
-        log.info("Laboratori (%s) llançat des del panell (caiguda màxima acceptada %s%%)", tipus, dd)
+        log.info("Laboratori de graella llançat des del panell (caiguda màxima acceptada %s%%)", dd)
         return 202, "Prova en marxa."
 
 
-def lab_apply(strategy_id: str) -> tuple[int, str]:
-    res = _read_json(LAB_RESULTS)
-    strat = next((s for s in res.get("estrategies", []) if s["id"] == strategy_id), None)
-    if strat is None:
-        return 404, "No trobo aquesta estratègia als resultats."
-    if strategy_id == "actual":
-        return lab_reset()
-    if strat.get("rendiment_anual_pct", 0) <= 0:
-        return 400, "Aquesta estratègia perd diners a la prova: no l'aplico."
-    override = {
-        "timeframe": strat["temporalitat"],
-        "strategy": strat.get("parametres") or strat.get("parametres_recomanats") or {},
-        "risk": {"max_drawdown_pct": float(res.get("caiguda_maxima_acceptada_pct", 25))},
-        "_origen": {"id": strategy_id, "nom": strat["nom"], "aplicada": datetime.now(timezone.utc).isoformat(),
-                    "prova": res.get("generat")},
-    }
-    tmp = OVERRIDE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        yaml.safe_dump(override, f, allow_unicode=True, sort_keys=False)
-    os.replace(tmp, OVERRIDE)
-    log.info("Estratègia del laboratori aplicada des del panell: %s", strat["nom"])
-    return 200, f"Aplicada: {strat['nom']}. El bot la farà servir en menys d'un minut."
-
-
-def lab_reset() -> tuple[int, str]:
-    if os.path.exists(OVERRIDE):
-        os.remove(OVERRIDE)
-        log.info("Ajustos del laboratori retirats: el bot torna a config.yaml de GitHub")
-    return 200, "El bot torna a fer servir la configuració de GitHub."
+def cleanup_old_labs() -> None:
+    """Retira els resultats, les dades i els ajustos dels laboratoris anteriors."""
+    removed = 0
+    for name in OLD_LAB_FILES:
+        p = os.path.join(LAB_DIR, name)
+        if os.path.exists(p):
+            os.remove(p)
+            removed += 1
+    if os.path.exists(OVERRIDE):            # estratègia aplicada des d'un laboratori antic
+        os.replace(OVERRIDE, OVERRIDE + ".retirat")
+        log.info("Ajustos d'un laboratori anterior retirats: el bot torna a config.yaml de GitHub")
+    cache = os.path.join(LAB_DIR, "dades")
+    if os.path.isdir(cache):
+        for f in os.listdir(cache):
+            if "_15m_" not in f:            # el laboratori actual només fa servir espelmes de 15 minuts
+                os.remove(os.path.join(cache, f))
+                removed += 1
+    if removed:
+        log.info("Laboratoris anteriors retirats (%d fitxers esborrats)", removed)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -216,9 +191,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(collect(), default=str).encode()
             return self._send(200, body, "application/json")
         if path == "/api/lab":
-            q = self.path.split("tipus=", 1)
-            tipus = q[1].split("&")[0] if len(q) > 1 and q[1].split("&")[0] in FILES else "llarg"
-            return self._send(200, json.dumps(lab_state(tipus), default=str).encode(), "application/json")
+            return self._send(200, json.dumps(lab_state(), default=str).encode(), "application/json")
         return self._send(404, b"not found", "text/plain")
 
     def do_POST(self):  # noqa: N802
@@ -241,17 +214,17 @@ class Handler(BaseHTTPRequestHandler):
                 dd = max(5.0, min(50.0, float(body.get("dd", 25))))
             except Exception:
                 dd = 25.0
-            code, msg = lab_start(dd, str(body.get("tipus", "llarg")))
-        elif path == "/api/lab/apply":
-            code, msg = lab_apply(str(body.get("id", "")))
-        elif path == "/api/lab/reset":
-            code, msg = lab_reset()
+            code, msg = lab_start(dd)
         else:
             return self._send(404, b"not found", "text/plain")
         return self._send(code, json.dumps({"missatge": msg}).encode(), "application/json")
 
 
 def start(port: int | None = None) -> ThreadingHTTPServer:
+    try:
+        cleanup_old_labs()
+    except Exception as e:
+        log.warning("No he pogut netejar els laboratoris anteriors: %s", e)
     port = port or int(os.environ.get("PORT", "8080"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True, name="panell").start()

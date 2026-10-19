@@ -99,62 +99,21 @@ En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 - **Aturar-lo:** a Render, *Settings → Suspend Service*. Mentre està suspès no es cobra el servei.
 - **Rearmar després d'una aturada d'emergència:** pestanya **Shell** → `python status.py --reset-halt` i després *Manual Deploy → Restart service*.
 
-## Laboratori de proves (des del panell)
+## Laboratori de graella (des del panell)
 
-Al panell hi ha el **Laboratori de proves**. Tries la caiguda màxima que acceptes (15, 25 o 35%) i prems **Fes la prova**. En uns 10-15 minuts:
+Al panell hi ha un sol laboratori: una **graella amb stop petit per lot**, provada sobre uns 6 anys d'espelmes reals de 15 minuts (des del 2020) en BTC, ETH, SOL, XRP, DOGE i ADA.
 
-1. Descarrega uns 6 anys d'espelmes reals de Binance (parells en USDT) i simula des del gener del 2021 fins avui, amb l'eufòria del 2021 i la caiguda del 2022.
-2. Prova cada estratègia amb **paràmetres fixos** en una sola execució contínua, amb l'aturada d'emergència a la caiguda triada, igual que el bot real: si salta, no torna a entrar.
-   - Estratègia actual i retrocés de 4 h.
-   - Rotació dels 4 més forts amb filtre BTC, amb tot el capital i amb la meitat (el **regulador de risc**, paràmetre `exposure`).
-   - Rotació sense filtre BTC, per veure què aporta el filtre.
-3. Mostra el rendiment **any per any** i el compara amb comprar Bitcoin, o els 12 valors, i no tocar res.
-4. **Prova de robustesa:** prova la rotació amb 24 combinacions de paràmetres. Si la majoria guanyen diners, l'avantatge és real; si no, és sort.
+- **L'esglaó** és el guany net desitjat (0,3%, 0,4% o 0,5%) més els costos (0,14% per operació, futurs amb ordres a mercat). Cada lot venut a l'objectiu deixa exactament aquest guany net.
+- **Stop per lot:** cada lot es ven si cau 1, 2 o 3 esglaons per sota del seu preu de compra. Un nivell parat no torna a comprar fins que el preu el recupera.
+- **Filtre de tendència opcional:** només compra quan el preu és per sobre de la seva mitjana de 200 espelmes.
+- **36 combinacions.** Es tria la millor amb els 4 primers anys (entrenament) i es prova amb els 2 últims, que no ha vist mai (validació).
 
-La recomanada és la de més rendiment que **guanya diners**, no passa de la caiguda triada i no fa saltar l'aturada d'emergència. Si cap ho compleix, el laboratori ho diu i no en recomana cap. Amb **Aplica-la al bot (simulació)**, el bot comença a fer-la servir en menys d'un minut (`state/config_lab.yaml`, amb prioritat sobre `config.yaml`). **Torna a la configuració de GitHub** retira els ajustos.
+**Criteri d'èxit fixat abans de la prova:**
+1. guanyar diners a l'entrenament i a la validació;
+2. no passar de la caiguda acceptada a la validació ni fer saltar l'aturada;
+3. que almenys 7 de les 10 millors combinacions de l'entrenament també guanyin a la validació.
 
-En local: `python run_lab.py --dd 25`.
-
-## Laboratori llarg/curt amb apalancament
-
-Una segona secció del panell prova estratègies que intenten guanyar tant quan el preu puja (llarg) com quan baixa (curt), amb apalancament x1, x2 i x3, sobre els mateixos ~6 anys de dades reals:
-
-- **Bitcoin: llarg o efectiu.** És la referència sense curts.
-- **Bitcoin: llarg o curt**, segons la mitjana de 200 dies.
-- **Bitcoin i Ether: llarg o curt.**
-- **Rotació llarg/curt:** llarg en els més forts quan el mercat puja, curt en els més febles quan baixa.
-
-Simula futurs perpetus amb costos prudents:
-- comissió del 0,05% més lliscament del 0,05%;
-- els llargs paguen un finançament del 0,01% cada 8 hores (els curts no en cobren res);
-- liquidació intra-espelma si el compte cau per sota del 0,5% de la posició;
-- aturada d'emergència a la caiguda triada.
-
-També hi ha proves de robustesa per a la tendència (15 combinacions) i per a la rotació (18).
-
-El **criteri d'èxit està fixat abans de la prova**: guanyar diners sense passar de la caiguda acceptada ni ser aturada, guanyar més que mantenir Bitcoin per cada euro de caiguda, i superar la prova de robustesa. Aquestes estratègies encara no es poden aplicar al bot: si alguna supera el criteri, s'implementa.
-
-En local: `python run_lab.py --tipus lc --dd 25`.
-
-## Laboratori de curt termini (5 minuts) · objectiu net fix
-
-Operacions de pocs minuts o hores, amb un **objectiu de guany net fix per operació guanyadora**: 0,3%, 0,4% o 0,5%, ja descomptades les comissions i el lliscament. L'objectiu de venda és el guany net desitjat més els costos d'anada i tornada.
-
-Prova quatre maneres d'entrar, amb espelmes de 5 minuts dels últims 6 mesos reals, en BTC, ETH, SOL, XRP, DOGE i ADA. Opera en llarg i curt i sense apalancament:
-- **reversió amb tendència:** bandes de Bollinger a favor de l'EMA de 200;
-- **retrocés RSI curt:** RSI(2) extrem a favor de la tendència;
-- **ruptura amb volum:** trencament del rang amb volum alt;
-- **graella:** l'esglaó és l'objectiu net més els costos.
-
-Per a cada entrada combina objectiu net (0,3/0,4/0,5%), stop (0,75×, 1,5× o 3× l'objectiu) i límit de temps (1 h o 3 h). En total són unes 250 combinacions per escenari de costos: futurs amb ordres a mercat (0,14% per operació) i amb ordres limitades (0,04%).
-
-**Mètode:** tria la millor combinació amb els 4 primers mesos (entrenament) i la prova amb els 2 últims, que no ha vist mai (validació). Només compta la validació. El panell mostra:
-- el net de cada operació guanyadora i perdedora, i el **net mitjà**, que és el que decideix el resultat;
-- la consistència de les 10 millors combinacions de l'entrenament quan es proven a la validació.
-
-**Criteri d'èxit fixat abans de la prova (a la validació):** guanyar diners, no passar de la caiguda acceptada ni fer saltar l'aturada, i que almenys 7 de les 10 millors combinacions de l'entrenament també guanyin.
-
-En local: `python run_lab.py --tipus ct --dd 15`.
+En local: `python run_lab.py --dd 15`. Els laboratoris anteriors s'han retirat: en arrencar, el panell n'esborra els resultats i les dades que quedin al disc.
 
 ## Altres maneres de tenir-lo encès 24/7
 
