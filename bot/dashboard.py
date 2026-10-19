@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .lab_grid import DAYS as GRID_DAYS
 from .paths import EQUITY, LAB_DIR, LOG_DIR, OVERRIDE, STATUS, TRADES
 
 log = logging.getLogger("panell")
@@ -134,7 +135,7 @@ def cleanup_old_labs() -> None:
     cache = os.path.join(LAB_DIR, "dades")
     if os.path.isdir(cache):
         for f in os.listdir(cache):
-            if "_15m_" not in f:            # el laboratori actual només fa servir espelmes de 15 minuts
+            if f"_15m_{GRID_DAYS}d" not in f:   # el laboratori actual: espelmes de 15 minuts dels 3 últims anys
                 os.remove(os.path.join(cache, f))
                 removed += 1
     if removed:

@@ -484,8 +484,8 @@ async function startLab(){
 }
 const labSelect=cur=>{ const v=cur||15; return `<label for="lab-dd">Caiguda màxima que acceptes</label>
   <select id="lab-dd">${[5,10,15,25].map(x=>`<option value="${x}" ${x==v?"selected":""}>${x} %</option>`).join("")}</select>`; };
-const labIntro=`<p>Prova una graella de compres escalonades amb <b>stop petit per lot</b>, sobre uns 6 anys d'espelmes reals de 15 minuts (des del 2020) en BTC, ETH, SOL, XRP, DOGE i ADA. Cada esglaó és el guany net que vols (0,3 %, 0,4 % o 0,5 %) més els costos: cada lot que es ven a l'objectiu deixa exactament aquest guany. Cada lot es ven si cau 1, 2 o 3 esglaons per sota del preu de compra. Prova 36 combinacions, amb i sense filtre de tendència, amb costos de futurs amb ordres a mercat (0,14 % per operació).</p>
-  <p>Tria la millor combinació amb els 4 primers anys (entrenament) i la prova amb els 2 últims, que no ha vist mai (validació). Tarda uns 10-20 minuts la primera vegada, perquè ha de descarregar les dades.</p>
+const labIntro=`<p>Prova una graella de compres escalonades amb <b>stop petit per lot</b>, sobre els 3 últims anys d'espelmes reals de 15 minuts en BTC, ETH, SOL, XRP, DOGE i ADA. Cada esglaó és el guany net que vols (0,3 %, 0,4 % o 0,5 %) més els costos: cada lot que es ven a l'objectiu deixa exactament aquest guany. Cada lot es ven si cau 1, 2 o 3 esglaons per sota del preu de compra. Prova 36 combinacions, amb i sense filtre de tendència, amb costos de futurs amb ordres a mercat (0,14 % per operació).</p>
+  <p>Tria la millor combinació amb els 2 primers anys (entrenament) i la prova amb l'últim any, que no ha vist mai (validació). Tarda uns 5-10 minuts la primera vegada, perquè ha de descarregar les dades.</p>
   <p class="sub" style="margin:0 0 8px">Criteri d'èxit, fixat abans de la prova: guanyar diners a l'entrenament i a la validació, no passar de la caiguda acceptada a la validació ni fer saltar l'aturada, i que almenys 7 de les 10 millors combinacions de l'entrenament també guanyin a la validació.</p>`;
 function renderLab(){
   const body=$("lab-body"); if(!lab) return;
@@ -523,7 +523,7 @@ function renderLab(){
     ${res.top10.map(x=>`<tr><td style="font-size:.86rem">${esc(x.text)}</td><td class="${sign(x.entrenament_pct)}">${fmtP(x.entrenament_pct)}</td><td class="${sign(x.validacio_pct)}"><b>${fmtP(x.validacio_pct)}</b></td></tr>`).join("")}</tbody></table></div>
     <p class="note">De les ${res.combinacions_total} combinacions, ${res.positives_entrenament} guanyen a l'entrenament i ${res.positives_validacio} a la validació.</p>`;
   body.innerHTML=synth+errMsg+`<p>Costos: ${fmtNum(res.cost_operacio_pct,2)} % per operació (futurs, ordres a mercat). Rendiments passats no garanteixen els futurs.</p>`+box
-    +`<div class="legend" id="lab-legend"></div><div id="labchart" style="height:230px;margin:12px -4px 4px;position:relative"></div><p class="note">Els 6 anys sencers amb la combinació triada, 1.000 € a l'inici. Sense aturada d'emergència, per veure-ho tot.</p>`
+    +`<div class="legend" id="lab-legend"></div><div id="labchart" style="height:230px;margin:12px -4px 4px;position:relative"></div><p class="note">Els 3 anys sencers amb la combinació triada, 1.000 € a l'inici. Sense aturada d'emergència, per veure-ho tot.</p>`
     +yearT+ops+top+`<div class="controls" style="margin-top:14px">${labSelect(lim)}<button class="btn ghost" id="lab-go" onclick="startLab()">Torna a fer la prova</button></div>`;
   drawLines("labchart","lab-legend",[{nom:"Graella",c:"#7A3E8E",pts:t.corba_total,w:1.8},{nom:"Comprar Bitcoin",c:"var(--muted)",pts:res.btc.corba_total,w:1.2,dash:"5 4"}]);
 }

@@ -1,4 +1,4 @@
-"""Laboratori de GRAELLA amb stop petit per lot, sobre ~6 anys de dades reals (espelmes de 15 minuts).
+"""Laboratori de GRAELLA amb stop petit per lot, sobre els 3 últims anys de dades reals (espelmes de 15 minuts).
 
 Com funciona la graella:
   - Es col·loquen N nivells de compra per sota del preu, separats per un esglaó.
@@ -15,8 +15,8 @@ Execució prudent amb espelmes de 15 minuts: compres i stops dins l'espelma (sto
 l'espelma obre per sota); un lot comprat no es pot vendre fins a l'espelma següent.
 
 Mètode:
-  - ENTRENAMENT: els 4 primers anys aproximadament. Es tria la millor combinació.
-  - VALIDACIÓ: els 2 últims anys, que l'optimització no ha vist. Només compta aquest resultat.
+  - ENTRENAMENT: els 2 primers anys dels 3 últims. Es tria la millor combinació.
+  - VALIDACIÓ: l'últim any, que l'optimització no ha vist. Només compta aquest resultat.
   - CONSISTÈNCIA: de les 10 millors combinacions de l'entrenament, quantes guanyen a la validació.
 
 Criteri d'èxit, FIXAT ABANS de la prova:
@@ -47,8 +47,8 @@ STATUS_FILE = os.path.join(LAB_DIR, "estat_graella.json")
 RESULTS_FILE = os.path.join(LAB_DIR, "resultats_graella.json")
 
 TF = "15m"
-DAYS = 2330                       # ~6,4 anys
-TEST_DAYS = 730                   # validació: els 2 últims anys
+DAYS = 1100                       # els 3 últims anys (i uns dies d'escalfament)
+TEST_DAYS = 365                   # validació: l'últim any
 WARMUP_BARS = 400
 CAPITAL = 1000.0
 SYMBOLS = ["BTC/EUR", "ETH/EUR", "SOL/EUR", "XRP/EUR", "DOGE/EUR", "ADA/EUR"]
@@ -220,7 +220,9 @@ def seg_stats(eq: np.ndarray, idx: pd.DatetimeIndex, nets: list, t0, t1, dd_limi
     total = float(s[-1] / CAPITAL - 1)
     days = max((t1 - t0).total_seconds() / 86400, 1)
     annual = (1 + total) ** (365 / days) - 1 if total > -1 else -1.0
-    sel = np.array([nt for ts, nt in nets if t0 <= ts < t1])
+    bars, vals = nets if nets else (np.array([], dtype=np.int64), np.array([]))
+    i0, i1 = idx.searchsorted(t0), idx.searchsorted(t1)
+    sel = vals[(bars >= i0) & (bars < i1)]
     win, loss = sel[sel > 0], sel[sel <= 0]
     out = {"rendiment_pct": round(total * 100, 1), "anual_pct": round(annual * 100, 1), "caiguda_pct": round(dd * 100, 1),
            "aturada": stopped, "operacions_setmana": round(len(sel) / (days / 7)),
@@ -254,37 +256,53 @@ def clean(d: dict) -> dict:
 
 def run(data: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict:
     idx = next(iter(data.values())).index
+    # Arrays compactes; es converteixen a llistes (més ràpides per al bucle) un valor cada vegada
     arr = {}
     for s, df in data.items():
         c = df["close"]
-        arr[s] = (df["open"].tolist(), df["high"].tolist(), df["low"].tolist(), c.tolist(),
-                  (c > ema(c, 200)).tolist(), c.to_numpy(float))
+        arr[s] = (df["open"].to_numpy(float), df["high"].to_numpy(float), df["low"].to_numpy(float),
+                  c.to_numpy(float), (c > ema(c, 200)).to_numpy())
     notional = CAPITAL / len(data)
     t_start = idx[WARMUP_BARS]
     t_end = idx[-1] + pd.Timedelta(minutes=15)
     t_split = t_end - pd.Timedelta(days=TEST_DAYS)
     combos = [dict(zip(GRID, v)) for v in itertools.product(*GRID.values())]
     rows = []
+    best_key, best_eq, best_nets = None, None, None
+
+    def key(st):
+        return (st["caiguda_pct"] <= dd_limit * 100, st["rendiment_pct"])
+
     for k, p in enumerate(combos):
         step = p["objectiu"] + 2 * COST_SIDE
         eq = np.full(len(idx), CAPITAL)
-        nets = []
+        bars_l, nets_l = [], []
         reasons = {"objectiu": 0, "stop": 0}
-        for s, (O, H, L, Cl, tr, Cn) in arr.items():
-            trades, *ev = run_grid(O, H, L, Cl, tr, step, p["nivells"], p["stop"], p["filtre"])
-            eq = eq + notional * equity_series(Cn, *ev, COST_SIDE)
+        for s, (O, H, L, Cn, tr) in arr.items():
+            trades, *ev = run_grid(O.tolist(), H.tolist(), L.tolist(), Cn.tolist(), tr.tolist(),
+                                   step, p["nivells"], p["stop"], p["filtre"])
+            eq += notional * equity_series(Cn, *ev, COST_SIDE)
             for b, x, g, why in trades:
-                nets.append((idx[b], g - 2 * COST_SIDE))
+                bars_l.append(b)
+                nets_l.append(g - 2 * COST_SIDE)
                 reasons[why] += 1
+            del trades, ev
+        nets = (np.asarray(bars_l, dtype=np.int64), np.asarray(nets_l))
+        del bars_l, nets_l
         tr_st = seg_stats(eq, idx, nets, t_start, t_split)
         te_st = seg_stats(eq, idx, nets, t_split, t_end, dd_limit)
-        rows.append({"p": p, "train": tr_st, "test": te_st, "motius": reasons, "eq": eq})
+        if best_key is None or key(tr_st) > best_key:          # només es guarda la corba de la millor
+            best_key, best_eq, best_nets = key(tr_st), eq, nets
+        rows.append({"p": p, "train": clean(tr_st), "test": clean(te_st), "motius": reasons})
         progress(round((k + 1) / len(combos) * 100, 1), f"Combinació {k + 1} de {len(combos)}: {combo_text(p)}")
 
     def ok_train(r):
         return r["train"]["caiguda_pct"] <= dd_limit * 100
     ranked = sorted(rows, key=lambda r: (ok_train(r), r["train"]["rendiment_pct"]), reverse=True)
     best = ranked[0]
+    best["eq"] = best_eq
+    best["train"] = seg_stats(best_eq, idx, best_nets, t_start, t_split)
+    best["test"] = seg_stats(best_eq, idx, best_nets, t_split, t_end, dd_limit)
     top = ranked[:10]
     consist = sum(1 for r in top if r["test"]["rendiment_pct"] > 0)
     tr_b, te_b = best["train"], best["test"]
@@ -343,7 +361,7 @@ def load(synthetic: bool = False) -> dict:
     cache = os.path.join(LAB_DIR, "dades")
     for k, s in enumerate(SYMBOLS):
         write_status(estat="descarregant", pct=round(k / len(SYMBOLS) * 100, 1),
-                     missatge=f"Descarregant 6 anys d'espelmes de 15 minuts de {s} (la primera vegada tarda uns minuts)")
+                     missatge=f"Descarregant 3 anys d'espelmes de 15 minuts de {s} (la primera vegada tarda uns minuts)")
         try:
             data[s] = fetch_history(s, TF, DAYS, cache_dir=cache, quote="USDT")
         except Exception as e:

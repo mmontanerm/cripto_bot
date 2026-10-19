@@ -101,12 +101,12 @@ En local, el panell és a http://localhost:8080 mentre el bot està en marxa.
 
 ## Laboratori de graella (des del panell)
 
-Al panell hi ha un sol laboratori: una **graella amb stop petit per lot**, provada sobre uns 6 anys d'espelmes reals de 15 minuts (des del 2020) en BTC, ETH, SOL, XRP, DOGE i ADA.
+Al panell hi ha un sol laboratori: una **graella amb stop petit per lot**, provada sobre els 3 últims anys d'espelmes reals de 15 minuts en BTC, ETH, SOL, XRP, DOGE i ADA.
 
 - **L'esglaó** és el guany net desitjat (0,3%, 0,4% o 0,5%) més els costos (0,14% per operació, futurs amb ordres a mercat). Cada lot venut a l'objectiu deixa exactament aquest guany net.
 - **Stop per lot:** cada lot es ven si cau 1, 2 o 3 esglaons per sota del seu preu de compra. Un nivell parat no torna a comprar fins que el preu el recupera.
 - **Filtre de tendència opcional:** només compra quan el preu és per sobre de la seva mitjana de 200 espelmes.
-- **36 combinacions.** Es tria la millor amb els 4 primers anys (entrenament) i es prova amb els 2 últims, que no ha vist mai (validació).
+- **36 combinacions.** Es tria la millor amb els 2 primers anys (entrenament) i es prova amb l'últim any, que no ha vist mai (validació).
 
 **Criteri d'èxit fixat abans de la prova:**
 1. guanyar diners a l'entrenament i a la validació;
