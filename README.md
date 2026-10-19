@@ -136,23 +136,23 @@ El **criteri d'èxit està fixat abans de la prova**: guanyar diners sense passa
 
 En local: `python run_lab.py --tipus lc --dd 25`.
 
-## Laboratori de curt termini (5 minuts)
+## Laboratori de curt termini (5 minuts) · objectiu net fix
 
-Prova la idea de fer moltes operacions petites cada setmana amb espelmes de 5 minuts dels últims 6 mesos reals, en els 6 valors més líquids. Hi ha tres famílies:
+Operacions de pocs minuts o hores, amb un **objectiu de guany net fix per operació guanyadora**: 0,3%, 0,4% o 0,5%, ja descomptades les comissions i el lliscament. L'objectiu de venda és el guany net desitjat més els costos d'anada i tornada.
 
-- **Reversió a la mitjana:** quan el preu surt de les bandes de Bollinger, aposta que hi tornarà, en llarg o en curt.
-- **Ruptura curta:** quan el preu trenca el rang de les últimes hores, hi entra amb un objectiu i un stop petits.
-- **Graella (grid):** compres escalonades per sota del preu; cada lot es ven un esglaó més amunt.
+Prova quatre maneres d'entrar, amb espelmes de 5 minuts dels últims 6 mesos reals, en BTC, ETH, SOL, XRP, DOGE i ADA. Opera en llarg i curt i sense apalancament:
+- **reversió amb tendència:** bandes de Bollinger a favor de l'EMA de 200;
+- **retrocés RSI curt:** RSI(2) extrem a favor de la tendència;
+- **ruptura amb volum:** trencament del rang amb volum alt;
+- **graella:** l'esglaó és l'objectiu net més els costos.
 
-Les estratègies operen sense apalancament, amb stop a cada operació i aturada d'emergència. Els resultats es calculen amb quatre nivells de costos per operació:
-- sense costos;
-- futurs amb ordres limitades;
-- futurs amb ordres a mercat (l'escenari realista);
-- Kraken spot.
+Per a cada entrada combina objectiu net (0,3/0,4/0,5%), stop (0,75×, 1,5× o 3× l'objectiu) i límit de temps (1 h o 3 h). En total són unes 250 combinacions per escenari de costos: futurs amb ordres a mercat (0,14% per operació) i amb ordres limitades (0,04%).
 
-La clau és la taula **guany brut per operació** comparat amb el **cost per operació**: si el guany és més petit que el cost, l'estratègia perd diners per molt que operi.
+**Mètode:** tria la millor combinació amb els 4 primers mesos (entrenament) i la prova amb els 2 últims, que no ha vist mai (validació). Només compta la validació. El panell mostra:
+- el net de cada operació guanyadora i perdedora, i el **net mitjà**, que és el que decideix el resultat;
+- la consistència de les 10 millors combinacions de l'entrenament quan es proven a la validació.
 
-Criteri d'èxit fixat abans de la prova: guanyar amb costos realistes, no passar de la caiguda acceptada i superar la robustesa.
+**Criteri d'èxit fixat abans de la prova (a la validació):** guanyar diners, no passar de la caiguda acceptada ni fer saltar l'aturada, i que almenys 7 de les 10 millors combinacions de l'entrenament també guanyin.
 
 En local: `python run_lab.py --tipus ct --dd 15`.
 
