@@ -522,7 +522,8 @@ function renderLab(){
   const top=`<h3 class="lab-h3">Consistència: les 10 millors de l'entrenament, a la validació</h3><div class="scroll"><table class="cmp"><thead><tr><th>Combinació</th><th>Entrenament</th><th>Validació</th></tr></thead><tbody>
     ${res.top10.map(x=>`<tr><td style="font-size:.86rem">${esc(x.text)}</td><td class="${sign(x.entrenament_pct)}">${fmtP(x.entrenament_pct)}</td><td class="${sign(x.validacio_pct)}"><b>${fmtP(x.validacio_pct)}</b></td></tr>`).join("")}</tbody></table></div>
     <p class="note">De les ${res.combinacions_total} combinacions, ${res.positives_entrenament} guanyen a l'entrenament i ${res.positives_validacio} a la validació.</p>`;
-  body.innerHTML=synth+errMsg+`<p>Costos: ${fmtNum(res.cost_operacio_pct,2)} % per operació (futurs, ordres a mercat). Rendiments passats no garanteixen els futurs.</p>`+box
+  const avis=res.avis?`<p class="warn">${esc(res.avis)}</p>`:"";
+  body.innerHTML=synth+errMsg+avis+`<p>Costos: ${fmtNum(res.cost_operacio_pct,2)} % per operació (futurs, ordres a mercat). Rendiments passats no garanteixen els futurs.</p>`+box
     +`<div class="legend" id="lab-legend"></div><div id="labchart" style="height:230px;margin:12px -4px 4px;position:relative"></div><p class="note">Els 3 anys sencers amb la combinació triada, 1.000 € a l'inici. Sense aturada d'emergència, per veure-ho tot.</p>`
     +yearT+ops+top+`<div class="controls" style="margin-top:14px">${labSelect(lim)}<button class="btn ghost" id="lab-go" onclick="startLab()">Torna a fer la prova</button></div>`;
   drawLines("labchart","lab-legend",[{nom:"Graella",c:"#7A3E8E",pts:t.corba_total,w:1.8},{nom:"Comprar Bitcoin",c:"var(--muted)",pts:res.btc.corba_total,w:1.2,dash:"5 4"}]);

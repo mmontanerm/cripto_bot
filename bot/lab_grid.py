@@ -7,7 +7,8 @@ Com funciona la graella:
   - STOP PER LOT (la novetat): cada lot es ven si cau K esglaons per sota del seu preu de compra
     (K = 1, 2 o 3). Així cap operació perdedora pot perdre gaire més que K esglaons.
   - Un nivell que ha fet saltar el stop no torna a comprar fins que el preu no recupera aquell nivell.
-  - Si no hi ha cap lot obert i el preu ha pujat, la graella es torna a centrar a sobre.
+  - Si no hi ha cap lot obert i el preu ha sortit de la graella (per dalt o per baix), es torna a centrar
+    al preu actual.
   - Filtre de tendència opcional: només compra quan el preu és per sobre de la seva mitjana
     de 200 espelmes (unes 50 hores).
 
@@ -105,11 +106,12 @@ def run_grid(O, H, L, C, trend_ok, step: float, levels: int, stop_k: int, use_fi
 
     buy_t, sell_t, stop_t, rearm_t = thresholds()
     recenter_t = center * (1 + 2 * step)
+    recenter_dn = lv[-1] * (1 - step)
     for i in range(WARMUP_BARS, n):
         lo, h = L[i], H[i]
         can_buy = (not use_filter) or trend_ok[i]
         # camí ràpid: en la gran majoria d'espelmes no passa res
-        if (lo > buy_t or not can_buy) and h < sell_t and lo > stop_t and h < rearm_t and (held or C[i] <= recenter_t):
+        if (lo > buy_t or not can_buy) and h < sell_t and lo > stop_t and h < rearm_t and (held or recenter_dn <= C[i] <= recenter_t):
             continue
         o, c = O[i], C[i]
         changed = False
@@ -161,12 +163,13 @@ def run_grid(O, H, L, C, trend_ok, step: float, levels: int, stop_k: int, use_fi
                     held[j] = [px, q, i, sp]
                     q_tot += q
                     basis += q * px
-        # 5) recentrar si no hi ha res obert i el preu ha pujat
-        if not held and c > center * (1 + 2 * step):
+        # 5) recentrar si no hi ha res obert i el preu ha sortit de la graella (per dalt o per baix)
+        if not held and (c > center * (1 + 2 * step) or c < lv[-1] * (1 - step)):
             center = c
             lv = make_levels(center)
             armed = [True] * levels
         recenter_t = center * (1 + 2 * step)
+        recenter_dn = lv[-1] * (1 - step)
         buy_t, sell_t, stop_t, rearm_t = thresholds()
         if changed:
             ev_i.append(i)
@@ -341,6 +344,10 @@ def run(data: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict:
                     {"text": f"A la validació no passa del {round(dd_limit * 100)} % de caiguda ni fa saltar l'aturada", "ok": ok2},
                     {"text": f"Almenys 7 de les 10 millors combinacions de l'entrenament guanyen a la validació ({consist} de {len(top)})", "ok": ok3}],
         "superat": bool(ok1 and ok2 and ok3),
+        # Control de qualitat: si cap combinació opera en un període, és un error, no un resultat
+        "avis": ("Cap combinació ha fet operacions en algun dels dos períodes: probablement és un error de la prova, no un resultat."
+                 if not any(r["train"]["operacions_setmana"] for r in rows) or not any(r["test"]["operacions_setmana"] for r in rows)
+                 else None),
         "top10": [{"text": combo_text(r["p"]), "entrenament_pct": r["train"]["rendiment_pct"],
                    "validacio_pct": r["test"]["rendiment_pct"], "validacio_caiguda_pct": r["test"]["caiguda_pct"]} for r in top],
         "totes": [{**r["p"], "entrenament_pct": r["train"]["rendiment_pct"], "validacio_pct": r["test"]["rendiment_pct"]} for r in rows],
