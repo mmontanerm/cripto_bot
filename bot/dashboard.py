@@ -34,7 +34,8 @@ LAB_RESULTS = os.path.join(LAB_DIR, "resultats_wf.json")
 LAB_RESULTS_PAST = os.path.join(LAB_DIR, "resultats_wf_passat.json")
 LAB_RESULTS_FAST = os.path.join(LAB_DIR, "resultats_wf_rapid.json")
 LAB_RESULTS_SCAN = os.path.join(LAB_DIR, "resultats_terme_mig.json")
-LAB_MODES = {"actual": [], "passat": ["--passat"], "rapid": ["--rapid"], "terme_mig": ["--terme-mig"]}
+LAB_RESULTS_SCALE = os.path.join(LAB_DIR, "resultats_escalat.json")
+LAB_MODES = {"actual": [], "passat": ["--passat"], "rapid": ["--rapid"], "terme_mig": ["--terme-mig"], "escalat": ["--escalat"]}
 # Fitxers dels laboratoris retirats: s'esborren en arrencar perquè no quedi cap resultat antic
 OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json",
                  "estat_graella.json", "resultats_graella.json"]
@@ -168,7 +169,8 @@ def lab_state() -> dict:
     return {"estat": _status(LAB_STATUS), "resultats": _read_json(LAB_RESULTS) or None,
             "resultats_passat": _read_json(LAB_RESULTS_PAST) or None,
             "resultats_rapid": _read_json(LAB_RESULTS_FAST) or None,
-            "resultats_terme_mig": _read_json(LAB_RESULTS_SCAN) or None}
+            "resultats_terme_mig": _read_json(LAB_RESULTS_SCAN) or None,
+            "resultats_escalat": _read_json(LAB_RESULTS_SCALE) or None}
 
 
 def lab_start(dd: float, mode: str = "actual") -> tuple[int, str]:
@@ -209,7 +211,7 @@ def cleanup_old_labs() -> None:
     cache = os.path.join(LAB_DIR, "dades")
     if os.path.isdir(cache):
         for f in os.listdir(cache):
-            if f"_15m_{LAB_DAYS}d" not in f and f"_1h_{PAST_START}_{PAST_END}" not in f:   # dades dels laboratoris actuals
+            if f"_15m_{LAB_DAYS}d" not in f and f"_1h_{PAST_START}_{PAST_END}" not in f and "_5m_" not in f:   # dades dels laboratoris actuals
                 os.remove(os.path.join(cache, f))
                 removed += 1
     if removed:

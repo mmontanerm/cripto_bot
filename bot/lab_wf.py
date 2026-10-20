@@ -113,6 +113,15 @@ RESULTS_SCAN_FILE = os.path.join(LAB_DIR, "resultats_terme_mig.json")
 SCAN_FAMILY = {"tendencia_bot": {"tipus": "tendencia", "nom": "Tendència amb les regles del bot", "desc": "", "grid": {}}}
 ALL_FAMILIES = {**FAMILIES, **FAST_FAMILIES, **SCAN_FAMILY}
 
+# PROVA D'ESCALAT PROPORCIONAL (demanada el 20-10-2026): l'estratègia del bot amb TOTS els paràmetres escalats
+# a la vegada. El bot fa servir espelmes d'1 hora i compta en espelmes: canal de 168, sortida de 84, ATR de 24 i
+# stop a 4 × ATR. Aquí es manté exactament el mateix nombre d'espelmes i només s'escurça la durada de cada
+# espelma (de 60 a 5 minuts). Així el canal, la sortida, l'ATR i el stop s'escurcen tots en la mateixa proporció.
+# Els costos per operació (0,14 %) no es poden escalar: són els mateixos en totes les mides.
+SCALE_CANDLES_MIN = [60, 45, 30, 20, 15, 10, 5]
+SCALE_PERIODS = {"passat": (PAST_START, PAST_END), "recent": ("2023-10-01", None)}
+RESULTS_SCALE_FILE = os.path.join(LAB_DIR, "resultats_escalat.json")
+
 
 MIDA_FIXA_TXT = " Mida fixa: cada valor opera sempre amb 1/6 del capital."
 MIDA_VOL_TXT = (" Mida segons volatilitat: cada posició es redueix perquè la seva volatilitat horària no passi del 0,5 %"
@@ -551,56 +560,186 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
     }
 
 
+def scan_row(t: dict, monkey: list, idx, bar_h: float, notional: float, dd_limit: float, i0: int) -> dict:
+    """Mètriques d'una configuració fixa sobre tot un període (regles del bot)."""
+    n = len(idx)
+    years = max((idx[-1] - idx[i0]).days / 365, 0.01)
+    days = max((idx[-1] - idx[i0]).days, 1)
+    st = period(t, i0, n, notional)
+    brake = period(t, i0, n, notional, dd_limit)
+    m = st["mask"]
+    nets = t["net"][m]
+    fund = FUNDING_8H * (t["x"][m] - t["e"][m] + 1) * bar_h / 8 * (t["d"][m] > 0)
+    gross = nets + 2 * COST_SIDE + fund
+    costs = float(((2 * COST_SIDE + fund) * t["w"][m] * notional).sum())
+    monkey = np.asarray(monkey)
+    pctile = float((monkey < st["pnl"]).mean() * 100)
+    nn = int(m.sum())
+    return {
+        "rendiment_pct": round(st["pnl"] / CAPITAL * 100, 1),
+        "anual_pct": round(((max(CAPITAL + st["pnl"], 0.01) / CAPITAL) ** (1 / years) - 1) * 100, 1),
+        "caiguda_pct": round(st["dd"] * 100, 1),
+        "fre": str(idx[brake["stopped_bar"]].date()) if brake["stopped_bar"] is not None else None,
+        "rendiment_amb_fre_pct": round(brake["pnl"] / CAPITAL * 100, 1),
+        "operacions": nn, "operacions_dia": round(nn / days, 2),
+        "guanyadores_pct": round(float((nets > 0).mean() * 100), 1) if nn else None,
+        "brut_mitja_pct": round(float(gross.mean() * 100), 3) if nn else None,
+        "net_mitja_pct": round(float(nets.mean() * 100), 3) if nn else None,
+        "costos_anuals_pct_capital": round(costs / CAPITAL / years * 100, 1),
+        "mico_mediana_pct": round(float(np.median(monkey)) / CAPITAL * 100, 1),
+        "mico_p95_pct": round(float(np.percentile(monkey, 95)) / CAPITAL * 100, 1),
+        "mico_percentil": round(pctile),
+        "supera": bool(st["pnl"] > 0 and pctile >= 95 and nn >= MIN_TRADES_WF),
+    }
+
+
+def period_info(idx, btc, i0: int) -> dict:
+    i_first = int(np.argmax(np.isfinite(btc[i0:]))) + i0
+    return {"des_de": str(idx[i0].date()), "fins": str(idx[-1].date()),
+            "btc_pct": round(float(btc[-1] / btc[i_first] - 1) * 100, 1)}
+
+
 def scan_period(syms: dict, dd_limit: float, progress, step0: int, total: int) -> tuple[list, dict, int]:
     """Totes les durades de canal sobre un període, amb les regles exactes del bot."""
     first = next(iter(syms.values()))
-    idx, bar_h, n = first.idx, first.bar_h, len(first.idx)
+    idx, bar_h = first.idx, first.bar_h
     notional = CAPITAL * SCAN_EXPOSURE / len(syms)
-    i0 = WARMUP
-    years = max((idx[-1] - idx[i0]).days / 365, 0.01)
-    days = max((idx[-1] - idx[i0]).days, 1)
     rows, step = [], step0
     for N in SCAN_CHANNELS:
         p = {"N": N, "sortida": 0.5, "stop": SCAN_STOP}
         t = combo_trades(syms, "tendencia_bot", p)
-        st = period(t, i0, n, notional)
-        brake = period(t, i0, n, notional, dd_limit)
-        m = st["mask"]
-        nets = t["net"][m]
-        fund = FUNDING_8H * (t["x"][m] - t["e"][m] + 1) * bar_h / 8 * (t["d"][m] > 0)
-        gross = nets + 2 * COST_SIDE + fund
-        costs = float(((2 * COST_SIDE + fund) * t["w"][m] * notional).sum())
         monkey = []
         for r in range(MONKEY_RUNS):
             mt = combo_trades(syms, "tendencia_bot", p, rng=np.random.default_rng(104729 * r + N))
-            monkey.append(period(mt, i0, n, notional)["pnl"])
+            monkey.append(period(mt, WARMUP, len(idx), notional)["pnl"])
             step += 1
-            progress(round(step / total * 95, 1), f"Canal de {N} h ({str(idx[i0].year)}-{str(idx[-1].year)}): prova del mico {r + 1}/{MONKEY_RUNS}")
-        monkey = np.asarray(monkey)
-        pctile = float((monkey < st["pnl"]).mean() * 100)
-        nn = int(m.sum())
-        rows.append({
-            "canal_h": N, "sortida_h": int(N * 0.5), "bot": N == SCAN_BOT_CHANNEL,
-            "rendiment_pct": round(st["pnl"] / CAPITAL * 100, 1),
-            "anual_pct": round(((max(CAPITAL + st["pnl"], 0.01) / CAPITAL) ** (1 / years) - 1) * 100, 1),
-            "caiguda_pct": round(st["dd"] * 100, 1),
-            "fre": str(idx[brake["stopped_bar"]].date()) if brake["stopped_bar"] is not None else None,
-            "rendiment_amb_fre_pct": round(brake["pnl"] / CAPITAL * 100, 1),
-            "operacions": nn, "operacions_dia": round(nn / days, 2),
-            "guanyadores_pct": round(float((nets > 0).mean() * 100), 1) if nn else None,
-            "brut_mitja_pct": round(float(gross.mean() * 100), 3) if nn else None,
-            "net_mitja_pct": round(float(nets.mean() * 100), 3) if nn else None,
-            "costos_anuals_pct_capital": round(costs / CAPITAL / years * 100, 1),
-            "mico_mediana_pct": round(float(np.median(monkey)) / CAPITAL * 100, 1),
-            "mico_p95_pct": round(float(np.percentile(monkey, 95)) / CAPITAL * 100, 1),
-            "mico_percentil": round(pctile),
-            "supera": bool(st["pnl"] > 0 and pctile >= 95 and nn >= MIN_TRADES_WF),
-        })
+            progress(round(step / total * 95, 1), f"Canal de {N} h ({str(idx[WARMUP].year)}-{str(idx[-1].year)}): prova del mico {r + 1}/{MONKEY_RUNS}")
+        rows.append({"canal_h": N, "sortida_h": int(N * 0.5), "bot": N == SCAN_BOT_CHANNEL,
+                     **scan_row(t, monkey, idx, bar_h, notional, dd_limit, WARMUP)})
     btc = syms["BTC/EUR"].C if "BTC/EUR" in syms else first.C
-    i_first = int(np.argmax(np.isfinite(btc[i0:]))) + i0
-    info = {"des_de": str(idx[i0].date()), "fins": str(idx[-1].date()),
-            "btc_pct": round(float(btc[-1] / btc[i_first] - 1) * 100, 1)}
+    return rows, period_info(idx, btc, WARMUP), step
+
+
+def fetch_5m(symbol: str, start: str, end: str | None, cache_dir: str, status=lambda pct, msg: None) -> pd.DataFrame:
+    """Espelmes de 5 minuts de Binance (USDT) entre dues dates, desades comprimides al disc.
+    El període sense data final es refresca si la còpia té més d'una setmana."""
+    from .data import COLS, _binance
+    os.makedirs(cache_dir, exist_ok=True)
+    sym = symbol.split("/")[0] + "USDT"
+    cache = os.path.join(cache_dir, f"{sym}_5m_{start}_{end or 'recent'}.csv.gz")
+    if os.path.exists(cache) and (end or time.time() - os.path.getmtime(cache) < 7 * 86400):
+        return pd.read_csv(cache, index_col=0, parse_dates=True).astype("float32")
+    t0 = int(pd.Timestamp(start, tz="UTC").timestamp() * 1000)
+    t1 = int(pd.Timestamp(end, tz="UTC").timestamp() * 1000) if end else int(time.time() * 1000)
+    total = max((t1 - t0) / 300_000 / 1000, 1)
+    rows, k, cur = [], 0, t0
+    while cur < t1:
+        batch = _binance({"symbol": sym, "interval": "5m", "startTime": cur, "endTime": t1 - 1, "limit": 1000})
+        if not batch:
+            break
+        rows.extend(b[:6] for b in batch)
+        cur = batch[-1][0] + 1
+        k += 1
+        if k % 20 == 0:
+            status(min(k / total, 1.0), f"Descarregant espelmes de 5 minuts de {symbol.split('/')[0]}")
+        time.sleep(0.05)
+    if not rows:
+        raise KeyError(f"{symbol}: sense dades de 5 minuts")
+    df = pd.DataFrame(rows, columns=["ts"] + COLS)
+    df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+    df = df.set_index("ts")[["open", "high", "low", "close"]].astype("float32")
+    df = df[~df.index.duplicated()]
+    if not end:
+        df = df.iloc[:-1]                                   # treu l'espelma oberta
+    df.to_csv(cache, compression="gzip")
+    return df
+
+
+def load_5m(key: str, synthetic_data: bool, mode_status) -> dict:
+    if synthetic_data:
+        raw = synthetic(SYMBOLS, "5m", 240, seed=31 if key == "passat" else 37)
+        if key == "passat":
+            raw["SOL/EUR"] = raw["SOL/EUR"].iloc[20000:]
+        return {s: df[["open", "high", "low", "close"]].astype("float32") for s, df in raw.items()}
+    start, end = SCALE_PERIODS[key]
+    cache = os.path.join(LAB_DIR, "dades")
+    raw = {}
+    for j, s in enumerate(SYMBOLS):
+        def st(frac, msg, j=j):
+            mode_status(round((j + frac) / len(SYMBOLS) * 100, 1), f"{msg} ({'2020-2023' if key == 'passat' else '2023-2026'})")
+        st(0, f"Preparant {s.split('/')[0]}")
+        try:
+            raw[s] = fetch_5m(s, start, end, cache, st)
+        except Exception as e:
+            log.warning("Salto %s: %s", s, e)
+    if "BTC/EUR" not in raw:
+        raise RuntimeError("No s'han pogut carregar les dades de Bitcoin")
+    return raw
+
+
+def resample_bars(df: pd.DataFrame, minutes: int) -> pd.DataFrame:
+    if minutes == 5:
+        return df
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
+    return df.resample(f"{minutes}min", origin="epoch").agg(agg).dropna()
+
+
+def scale_period(raw: dict, dd_limit: float, progress, step0: int, total: int, label: str) -> tuple[list, dict, int]:
+    """Les mateixes 168/84/24 espelmes i stop 4 × ATR, amb espelmes de 60 a 5 minuts. Valor a valor per estalviar memòria."""
+    notional = CAPITAL * SCAN_EXPOSURE / len(raw)
+    rows, step, info = [], step0, None
+    for mins in SCALE_CANDLES_MIN:
+        base = resample_bars(raw["BTC/EUR"], mins).index
+        real, monk = [], [[] for _ in range(MONKEY_RUNS)]
+        btc = None
+        for s, df in raw.items():
+            sym = Sym(resample_bars(df, mins).reindex(base).ffill())      # sense omplir abans de cotitzar
+            if s == "BTC/EUR":
+                btc = sym.C.copy()
+            en, xl, xs = trend_signals(sym, 168, 0.5)
+            real.append(run(sym, en, xl, xs, SCAN_STOP, 0, 1.0))
+            for r in range(MONKEY_RUNS):
+                monk[r].append(run(sym, en, xl, xs, SCAN_STOP, 0, 1.0, rng=np.random.default_rng(15485863 * r + mins * 7 + len(real))))
+            bar_h = sym.bar_h
+            del sym, en, xl, xs
+            step += 1
+            progress(round(step / total * 95, 1), f"Espelmes de {mins} minuts ({label}): {s.split('/')[0]} fet")
+
+        def merge(parts):
+            cols = list(zip(*parts))
+            out = {k: np.concatenate(v) for k, v in zip(("e", "x", "d", "net", "worst", "w", "f"), cols)}
+            order = np.argsort(out["x"], kind="stable")
+            return {k: v[order] for k, v in out.items()}
+        t = merge(real)
+        monkey = [period(merge(mp), WARMUP, len(base), notional)["pnl"] for mp in monk]
+        del monk
+        h = mins / 60
+        rows.append({"vela_min": mins, "canal_h": round(168 * h, 1), "sortida_h": round(84 * h, 1), "atr_h": round(24 * h, 1),
+                     "bot": mins == 60, **scan_row(t, monkey, base, bar_h, notional, dd_limit, WARMUP)})
+        if mins == 60:
+            info = period_info(base, btc, WARMUP)
     return rows, info, step
+
+
+def run_scale(dd_limit: float, synthetic_data: bool, progress=lambda pct, msg: None) -> dict:
+    total = len(SCALE_PERIODS) * len(SCALE_CANDLES_MIN) * len(SYMBOLS)
+    step, out = 0, {}
+    for key in SCALE_PERIODS:
+        raw = load_5m(key, synthetic_data, lambda pct, msg: write_status(estat="descarregant", mode="escalat", pct=pct, missatge=msg))
+        label = "2020-2023" if key == "passat" else "2023-2026"
+        rows, info, step = scale_period(raw, dd_limit, progress, step, total, label)
+        out[key] = {**info, "files": rows}
+        del raw
+    resum = [{"vela_min": m, "canal_h": out["passat"]["files"][k]["canal_h"],
+              "supera_tots": all(out[p]["files"][k]["supera"] for p in out)} for k, m in enumerate(SCALE_CANDLES_MIN)]
+    return {
+        "versio": 7, "mode": "escalat", "generat": datetime.now(timezone.utc).isoformat(),
+        "regles": {"canal_espelmes": 168, "sortida_espelmes": 84, "atr_espelmes": 24, "stop_atr": SCAN_STOP,
+                   "exposicio_pct": round(SCAN_EXPOSURE * 100)},
+        "costos": {"operacio_pct": round(2 * COST_SIDE * 100, 2), "financament_8h_pct": FUNDING_8H * 100},
+        "caiguda_maxima_acceptada_pct": round(dd_limit * 100), "mico": MONKEY_RUNS,
+        "periodes": out, "resum": resum,
+    }
 
 
 def run_scan(periods: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict:
@@ -626,7 +765,7 @@ def run_scan(periods: dict, dd_limit: float, progress=lambda pct, msg: None) -> 
 def synthetic(symbols, timeframe, days, seed=7):
     """Preus INVENTATS amb fases de tendència. Només serveixen per comprovar que el codi funciona."""
     rng = np.random.default_rng(seed)
-    mins = {"15m": 15, "1h": 60}[timeframe]
+    mins = {"5m": 5, "15m": 15, "1h": 60}[timeframe]
     n = days * 1440 // mins
     idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").floor(f"{mins}min"), periods=n, freq=f"{mins}min")
     out = {}
@@ -710,13 +849,15 @@ def load(synthetic_data: bool = False) -> dict:
 
 
 def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = False, fast: bool = False,
-         scan: bool = False) -> dict:
+         scan: bool = False, scale: bool = False) -> dict:
     t0 = time.time()
-    mode = "terme_mig" if scan else "rapid" if fast else "passat" if past else "actual"
+    mode = "escalat" if scale else "terme_mig" if scan else "rapid" if fast else "passat" if past else "actual"
     write_status(estat="descarregant", mode=mode, pct=0, missatge="Preparant les dades")
     try:
         prog = lambda pct, msg: write_status(estat="provant", mode=mode, pct=pct, missatge=msg)   # noqa: E731
-        if scan:
+        if scale:
+            res = run_scale(dd_limit_pct / 100, synthetic, prog)
+        elif scan:
             periods = {"passat": load_past(synthetic), "recent": load(synthetic)}
             res = run_scan(periods, dd_limit_pct / 100, prog)
         elif fast:
@@ -727,7 +868,7 @@ def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = F
         res["mode"] = mode
         res["durada_min"] = round((time.time() - t0) / 60, 1)
         res["dades_sintetiques"] = synthetic
-        out = RESULTS_SCAN_FILE if scan else RESULTS_FAST_FILE if fast else RESULTS_PAST_FILE if past else RESULTS_FILE
+        out = RESULTS_SCALE_FILE if scale else RESULTS_SCAN_FILE if scan else RESULTS_FAST_FILE if fast else RESULTS_PAST_FILE if past else RESULTS_FILE
         tmp = out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(res, f, default=str)

@@ -673,17 +673,21 @@ function labBlock(res, key){
 }
 const scanIntro=`<p>Les <b>regles exactes del bot en directe</b> (espelmes d'1 hora, sortida amb un canal de la meitat de durada, stop a 4 × ATR de 24 hores, el 60 % del capital repartit entre els 6 valors i els mateixos costos), sense optimitzar res. <b>L'única cosa que canvia és la durada del canal d'entrada</b>: des dels 7 dies del bot (168 h) fins a 6 hores. Com més curt el canal, més operacions.</p>
   <p>Es prova en dos períodes separats (2020–2023 i 2023–2026) i cada durada es compara amb 25 simulacions amb entrades a l'atzar. He comprovat que, amb els mateixos preus, el laboratori i el bot fan exactament les mateixes operacions. Tarda uns 5-10 minuts.</p>`;
+const scaleIntro=`<p>L'estratègia del bot amb <b>tots els paràmetres escalats a la vegada</b>. El bot compta en espelmes d'1 hora: canal de 168 espelmes, sortida de 84, ATR de 24 i stop a 4 × ATR. Aquí es manté <b>exactament el mateix nombre d'espelmes</b> i només s'escurça la durada de cada espelma: 60, 45, 30, 20, 15, 10 i 5 minuts. Així el canal, la sortida, l'ATR i el stop s'escurcen tots en la mateixa proporció (amb espelmes de 5 minuts: canal de 14 h, sortida de 7 h, ATR de 2 h).</p>
+  <p>El que no es pot escalar són els costos: cada operació paga el mateix 0,14 % tant si dura una setmana com una hora. Mateix capital (60 %), mateixos costos, dos períodes (2020–2023 i 2023–2026) i 25 simulacions a l'atzar per a cada mida. He comprovat que la fila de 60 minuts dona exactament el mateix que el bot.</p>
+  <p><b>La primera vegada ha de descarregar unes 2,7 milions d'espelmes de 5 minuts</b> (6 valors, 2020–2026): pot tardar 30-40 minuts. Després queden desades i la prova tarda uns 10 minuts.</p>`;
 function scanBlock(res){
+  const scale=res.mode==="escalat";
   const synth=res.dades_sintetiques?`<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>`:"";
-  const ok=res.resum.filter(r=>r.supera_tots).map(r=>r.canal_h);
+  const ok=res.resum.filter(r=>r.supera_tots).map(r=>scale?`espelmes de ${r.vela_min} min`:`canal de ${r.canal_h} h`);
   const head=`<div class="winner" style="border-color:${ok.length?"var(--gain)":"var(--amber)"}">
-    <div class="sub" style="margin:0">Regles del bot · només canvia la durada del canal</div>
-    <h3>${ok.length?`El canal de ${ok.map(n=>n+" h").join(", ")} guanya i supera l'atzar en tots dos períodes`:"Cap durada guanya i supera l'atzar en tots dos períodes"}</h3>
+    <div class="sub" style="margin:0">${scale?"Regles del bot · tots els paràmetres escalats":"Regles del bot · només canvia la durada del canal"}</div>
+    <h3>${ok.length?`${(ok.length>2?`${ok.length} de ${res.resum.length} ${scale?"mides d'espelma":"durades"}`:ok.join(" i ")).replace(/^./,c=>c.toUpperCase())}: ${ok.length>1?"guanyen i superen":"guanya i supera"} l'atzar en tots dos períodes`:`Cap ${scale?"mida d'espelma":"durada"} guanya i supera l'atzar en tots dos períodes`}</h3>
     <div class="sub" style="margin:0">Per superar-ho cal guanyar diners, fer almenys 100 operacions i quedar per sobre del 95 % de les simulacions amb entrades a l'atzar, tant el 2020–2023 com el 2023–2026.</div></div>`;
   const table=(key,title)=>{ const P=res.periodes[key]; if(!P) return "";
     return `<h3 class="lab-h3">${title} · ${dmy(P.des_de)} – ${dmy(P.fins)} <span class="sub" style="font-weight:400">(Bitcoin ${fmtP(P.btc_pct)})</span></h3>
-    <div class="scroll"><table class="cmp wide"><thead><tr><th>Canal (entrada / sortida)</th><th>Operacions/dia</th><th>Resultat</th><th>Pitjor caiguda</th><th>Per operació abans de costos</th><th>Després de costos</th><th>Costos a l'any</th><th>Millor que l'atzar</th></tr></thead><tbody>
-    ${P.files.map(r=>`<tr${r.bot?' style="background:var(--sunk)"':""}><td><b>${r.canal_h} h</b> / ${r.sortida_h} h${r.bot?' <span class="applied">el bot</span>':""}${r.supera?' <span class="applied">supera</span>':""}</td>
+    <div class="scroll"><table class="cmp wide"><thead><tr><th>${scale?"Espelma · canal / sortida / ATR":"Canal (entrada / sortida)"}</th><th>Operacions/dia</th><th>Resultat</th><th>Pitjor caiguda</th><th>Per operació abans de costos</th><th>Després de costos</th><th>Costos a l'any</th><th>Millor que l'atzar</th></tr></thead><tbody>
+    ${P.files.map(r=>`<tr${r.bot?' style="background:var(--sunk)"':""}><td>${scale?`<b>${r.vela_min} min</b><span class="pm">canal ${fmtNum(r.canal_h,0)} h / sortida ${fmtNum(r.sortida_h,0)} h / ATR ${fmtNum(r.atr_h,0)} h</span>`:`<b>${r.canal_h} h</b> / ${r.sortida_h} h`}${r.bot?' <span class="applied">el bot</span>':""}${r.supera?' <span class="applied">supera</span>':""}</td>
       <td>${fmtNum(r.operacions_dia,1)}</td><td class="${sign(r.rendiment_pct)}"><b>${fmtP(r.rendiment_pct)}</b><span class="pm">${fmtP(r.anual_pct)} anual</span></td>
       <td>${fmtNum(r.caiguda_pct,1)} %${r.fre?`<span class="pm">el fre del ${res.caiguda_maxima_acceptada_pct} % hauria saltat el ${dmy(r.fre)}</span>`:""}</td>
       <td class="${sign(r.brut_mitja_pct)}">${r.brut_mitja_pct==null?"—":pct(r.brut_mitja_pct,2)}</td><td class="${sign(r.net_mitja_pct)}">${r.net_mitja_pct==null?"—":pct(r.net_mitja_pct,2)}</td>
@@ -695,19 +699,21 @@ function scanBlock(res){
 function renderLab(){
   const body=$("lab-body"); if(!lab) return;
   const st=lab.estat||{}, ok=r=>r&&r.versio>=4?r:null;
-  const res=ok(lab.resultats), past=ok(lab.resultats_passat), fast=ok(lab.resultats_rapid), scan=lab.resultats_terme_mig?.versio===6?lab.resultats_terme_mig:null;
+  const res=ok(lab.resultats), past=ok(lab.resultats_passat), fast=ok(lab.resultats_rapid), scan=lab.resultats_terme_mig?.versio===6?lab.resultats_terme_mig:null, scl=lab.resultats_escalat?.versio===7?lab.resultats_escalat:null;
   const running=st.estat==="descarregant"||st.estat==="provant", runMode=running?(st.mode||"actual"):null;
   clearTimeout(labTimer); if(running) labTimer=setTimeout(loadLab,5000);
-  const last=[res,past,fast,scan].filter(Boolean).map(r=>r.generat).sort().pop();
+  const last=[res,past,fast,scan,scl].filter(Boolean).map(r=>r.generat).sort().pop();
   $("lab-when").textContent = last && !running ? `Última prova ${ago(last)}` : "";
   const prog=`<p>${esc(st.missatge||"Treballant…")}</p><div class="bar"><i style="width:${st.pct||0}%"></i></div>
       <p>${fmtNum(st.pct||0,0)} % fet. Pots tancar el panell: la prova continua i els resultats apareixeran aquí.</p>`;
   const errMsg=(st.estat==="error"||st.estat==="interrompuda")?`<p class="warn">${esc(st.missatge)}</p>`:"";
   const fb=fast?labBlock(fast,"rapid"):null, pb=past?labBlock(past,"passat"):null, mb=res?labBlock(res,"actual"):null;
-  const lim=(scan||fast||past||res||{}).caiguda_maxima_acceptada_pct;
+  const lim=(scl||scan||fast||past||res||{}).caiguda_maxima_acceptada_pct;
   const fold=(title,html)=>`<details><summary>${title}</summary>${html}</details>`;
-  const scanSec=`<h3 class="lab-h3" style="margin-top:6px">Terme mig: el bot amb canals més curts</h3>`
-    +(runMode==="terme_mig"?prog:(scan?scanBlock(scan)+fold("Com es fa aquesta prova",scanIntro):scanIntro));
+  const sclSec=`<h3 class="lab-h3" style="margin-top:6px">Escalat proporcional: el bot amb espelmes més curtes</h3>`
+    +(runMode==="escalat"?prog:(scl?scanBlock(scl)+fold("Com es fa aquesta prova",scaleIntro):scaleIntro));
+  const scanSec=`<h3 class="lab-h3" style="margin-top:22px">Terme mig: el bot amb canals més curts</h3>`
+    +(runMode==="terme_mig"?prog:(scan?fold("Veure els resultats del terme mig",scanBlock(scan)+scanIntro):scanIntro));
   const fastSec=`<h3 class="lab-h3" style="margin-top:22px">Prova ràpida: 10-12 operacions al dia (espelmes de 15 minuts)</h3>`
     +(runMode==="rapid"?prog:(fast?fold("Veure els resultats de la prova ràpida",fb.html+fastDiff):fastIntro+fastDiff));
   const pastSec=`<h3 class="lab-h3" style="margin-top:22px">Prova de la tendència amb anys no vistos (2020–2023)</h3>`
@@ -716,8 +722,8 @@ function renderLab(){
     +(runMode==="actual"?prog:(res?fold(`Veure els resultats del laboratori principal${res.guanyadora?"":" · cap estratègia supera el criteri"}`,mb.html):labIntro));
   const btn=(mode,has,label,cls)=>`<button class="btn ${cls} lab-go" ${running?"disabled":""} onclick="startLab('${mode}')">${has?"Torna a fer ":"Fes "}${label}</button>`;
   const ctrl=`<div class="controls" style="margin-top:14px">${labSelect(lim)}
-      ${btn("terme_mig",scan,"la prova del terme mig","")}${btn("rapid",fast,"la prova ràpida","ghost")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
-  body.innerHTML=errMsg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+scanSec+fastSec+pastSec+mainSec+ctrl;
+      ${btn("escalat",scl,"l'escalat proporcional","")}${btn("terme_mig",scan,"el terme mig","ghost")}${btn("rapid",fast,"la prova ràpida","ghost")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
+  body.innerHTML=errMsg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+sclSec+scanSec+fastSec+pastSec+mainSec+ctrl;
   const draw=()=>{ if(fb&&runMode!=="rapid") fb.draw(); if(pb&&runMode!=="passat") pb.draw(); if(mb&&runMode!=="actual") mb.draw(); };
   draw();
   body.querySelectorAll("details").forEach(d=>d.addEventListener("toggle",draw));
