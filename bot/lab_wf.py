@@ -55,6 +55,19 @@ RESULTS_PAST_FILE = os.path.join(LAB_DIR, "resultats_wf_passat.json")
 # Inclou un mercat molt alcista (2021) i un de molt baixista (2022). Fixat el 19-10-2026, abans de veure'n el resultat.
 PAST_START, PAST_END = "2020-01-01", "2023-10-01"
 PAST_FAMILIES = ["tendencia"]
+RESULTS_FAST_FILE = os.path.join(LAB_DIR, "resultats_wf_rapid.json")
+
+# PROVA RÀPIDA (demanada el 20-10-2026): les mateixes regles llarg/curt amb espelmes de 15 MINUTS i canals
+# curts, per arribar a unes 10-12 operacions al dia entre els 6 valors. Mateixos costos, mètode i criteri.
+# Els períodes es compten en espelmes de 15 minuts (16 = 4 hores).
+FAST_FAMILIES = {
+    "tendencia_rapida": {"tipus": "tendencia", "nom": "Tendència ràpida llarg/curt",
+                         "desc": "Espelmes de 15 minuts. Compra quan el preu trenca el màxim de les últimes hores i ven en curt quan trenca el mínim (canals de 4 a 24 hores). Surt amb un canal més curt en contra o amb el stop.",
+                         "grid": {"N": [16, 32, 48, 96], "sortida": [0.25, 0.5], "stop": [1.5, 2.0, 3.0]}},
+    "reversio_rapida": {"tipus": "reversio", "temps": 16, "nom": "Reversió ràpida llarg/curt",
+                        "desc": "Espelmes de 15 minuts. Quan el preu surt de les bandes de Bollinger (de 4 o 8 hores) aposta que tornarà a la mitjana. Surt a la mitjana, amb el stop o al cap de 4 hores.",
+                        "grid": {"n": [16, 32], "k": [2.0, 2.5, 3.0], "stop": [1.5, 2.0, 3.0]}},
+}
 
 SRC_TF = "15m"
 DAYS = 1100                      # mateixes dades que el laboratori anterior (ja descarregades)
@@ -77,16 +90,17 @@ VOL_TARGET = 0.005
 SIZINGS = ["fixa", "volatilitat"]
 
 FAMILIES = {
-    "tendencia": {"nom": "Tendència llarg/curt",
+    "tendencia": {"tipus": "tendencia", "nom": "Tendència llarg/curt",
                   "desc": "Compra quan el preu trenca el màxim de les últimes N hores i ven en curt quan trenca el mínim. Surt quan el preu trenca un canal més curt en contra o toca el stop.",
                   "grid": {"N": [24, 48, 96, 168], "sortida": [0.25, 0.5], "stop": [2.0, 3.0, 4.0]}},
-    "reversio": {"nom": "Reversió llarg/curt",
+    "reversio": {"tipus": "reversio", "temps": REV_TIME, "nom": "Reversió llarg/curt",
                  "desc": "Quan el preu surt de les bandes de Bollinger aposta que tornarà a la mitjana: compra si ha caigut massa i ven en curt si ha pujat massa. Surt a la mitjana, amb el stop o al cap de 48 hores.",
                  "grid": {"n": [24, 48], "k": [2.0, 2.5, 3.0], "stop": [2.0, 3.0, 4.0]}},
-    "regim": {"nom": "Règim: tendència o reversió",
+    "regim": {"tipus": "regim", "nom": "Règim: tendència o reversió",
               "desc": "Mesura si el mercat té tendència (ràtio d'eficiència de 48 hores). Si en té, opera la ruptura; si no, la reversió. Cada part fa servir la meitat del capital del valor.",
               "grid": {"llindar": [0.2, 0.3, 0.4], "N": [48, 96], "k": [2.0, 2.5]}},
 }
+ALL_FAMILIES = {**FAMILIES, **FAST_FAMILIES}
 
 
 MIDA_FIXA_TXT = " Mida fixa: cada valor opera sempre amb 1/6 del capital."
@@ -108,6 +122,7 @@ def write_status(**kw) -> None:
 class Sym:
     def __init__(self, df: pd.DataFrame):
         self.idx = df.index
+        self.bar_h = float(pd.Series(df.index[:50]).diff().median() / pd.Timedelta(hours=1)) if len(df) > 2 else 1.0
         self.O, self.H, self.L, self.C = (df[c].to_numpy(float) for c in ("open", "high", "low", "close"))
         c = df["close"]
         prev = c.shift()
@@ -229,7 +244,7 @@ def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: flo
         else:
             worst = max(H[e:last].max() if last > e else xp, xp)
         gross = d * (xp - ep) / ep
-        funding = FUNDING_8H * (x - e + 1) / 8 if d > 0 else 0.0
+        funding = FUNDING_8H * (x - e + 1) * s.bar_h / 8 if d > 0 else 0.0
         out[0].append(e)
         out[1].append(x)
         out[2].append(d)
@@ -250,14 +265,16 @@ def sized(tr: dict, sizing: str) -> dict:
 def combo_trades(syms: dict, fam: str, p: dict, rng=None) -> dict:
     """Operacions de tots els valors per a una combinació. Pes = fracció del capital d'aquell valor;
     `f` = fracció que es fa servir si la mida va segons la volatilitat."""
+    spec = ALL_FAMILIES[fam]
+    kind, T = spec["tipus"], spec.get("temps", REV_TIME)
     parts = []
     for s in syms.values():
-        if fam == "tendencia":
+        if kind == "tendencia":
             en, xl, xs = trend_signals(s, p["N"], p["sortida"])
             parts.append(run(s, en, xl, xs, p["stop"], 0, 1.0, rng))
-        elif fam == "reversio":
+        elif kind == "reversio":
             en, xl, xs = rev_signals(s, p["n"], p["k"])
-            parts.append(run(s, en, xl, xs, p["stop"], REV_TIME, 1.0, rng))
+            parts.append(run(s, en, xl, xs, p["stop"], T, 1.0, rng))
         else:
             en, xl, xs = trend_signals(s, p["N"], 0.5)
             parts.append(run(s, np.where(s.er > p["llindar"], en, 0), xl, xs, REGIME_STOP, 0, 0.5, rng))
@@ -318,11 +335,18 @@ def choose(trades: list, nb: dict, i0: int, i1: int, notional: float) -> int:
     return int(np.argmax(plateau))
 
 
-def params_text(fam: str, p: dict) -> str:
-    if fam == "tendencia":
-        return f"canal de {p['N']} h, sortida amb canal de {max(2, int(p['N'] * p['sortida']))} h, stop {p['stop']:g}× ATR"
-    if fam == "reversio":
-        return f"Bollinger de {p['n']} h a {p['k']:g} desviacions, stop {p['stop']:g}× ATR"
+def _hours(bars: int, bar_h: float) -> str:
+    h = bars * bar_h
+    return f"{h:g} h" if h >= 1 else f"{h * 60:g} min"
+
+
+def params_text(fam: str, p: dict, bar_h: float = 1.0) -> str:
+    kind = ALL_FAMILIES[fam]["tipus"]
+    if kind == "tendencia":
+        return (f"canal de {_hours(p['N'], bar_h)}, sortida amb canal de {_hours(max(2, int(p['N'] * p['sortida'])), bar_h)}, "
+                f"stop {p['stop']:g}× ATR")
+    if kind == "reversio":
+        return f"Bollinger de {_hours(p['n'], bar_h)} a {p['k']:g} desviacions, stop {p['stop']:g}× ATR"
     return f"llindar de tendència {p['llindar']:g}, canal de {p['N']} h, Bollinger a {p['k']:g} desviacions"
 
 
@@ -339,13 +363,17 @@ def _thin(rows: list, n: int = 400) -> list:
     return out
 
 
-def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, families=None) -> dict:
-    fams = {k: v for k, v in FAMILIES.items() if families is None or k in families}
+def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, families=None,
+            family_defs: dict | None = None, sizings: list | None = None) -> dict:
+    defs = family_defs or FAMILIES
+    sizings = sizings or SIZINGS
+    fams = {k: v for k, v in defs.items() if families is None or k in families}
     first = next(iter(syms.values()))
     idx = first.idx
+    bar_h = first.bar_h
     n = len(idx)
     notional = CAPITAL / len(syms)
-    t_end = idx[-1] + pd.Timedelta(hours=1)
+    t_end = idx[-1] + pd.Timedelta(hours=bar_h)
     t_hold = t_end - pd.Timedelta(days=HOLDOUT_DAYS)
     bar = lambda t: int(idx.searchsorted(t))             # noqa: E731
     windows = []
@@ -360,7 +388,7 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
     years = max((windows[-1][2] - windows[0][1]).days / 365, 0.01)
     hold_days = max((t_end - t_hold).days, 1)
 
-    total_steps = sum(len(list(itertools.product(*f["grid"].values()))) for f in fams.values()) + len(fams) * len(SIZINGS)
+    total_steps = sum(len(list(itertools.product(*f["grid"].values()))) for f in fams.values()) + len(fams) * len(sizings)
     step = 0
     fams_out = []
     for fam, spec in fams.items():
@@ -369,14 +397,14 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
         for p in params:
             raw_trades.append(combo_trades(syms, fam, p))
             step += 1
-            progress(round(step / total_steps * 95, 1), f"{spec['nom']}: {params_text(fam, p)}")
+            progress(round(step / total_steps * 95, 1), f"{spec['nom']}: {params_text(fam, p, bar_h)}")
         msims: dict = {}                                     # simulacions del mico, compartides per les dues mides
-        for sizing in SIZINGS:
+        for sizing in sizings:
             trades = [sized(t, sizing) for t in raw_trades]
             label = spec["nom"] + (" · mida segons volatilitat" if sizing == "volatilitat" else " · mida fixa")
 
             # 1) Walk-forward: tria amb 6 mesos, opera els 2 següents
-            chosen, rows, nets, expo, curve = [], [], [], [], [(str(windows[0][1].date()), CAPITAL)]
+            chosen, rows, nets, expo, gross, curve = [], [], [], [], [], [(str(windows[0][1].date()), CAPITAL)]
             bal, prev, switch_cost, longs = CAPITAL, None, 0.0, 0
             fees = funding = 0.0
             for (a, b, c) in windows:
@@ -404,8 +432,10 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
                 longs += int((t["d"][m] > 0).sum())
                 fees += float((2 * COST_SIDE * w).sum())
                 held = (t["x"][m] - t["e"][m] + 1)
-                funding += float((FUNDING_8H * held / 8 * (t["d"][m] > 0) * w).sum())
-                rows.append({"des_de": str(b.date()), "fins": str(c.date()), "parametres": params_text(fam, params[ci]),
+                fund_frac = FUNDING_8H * held * bar_h / 8 * (t["d"][m] > 0)
+                funding += float((fund_frac * w).sum())
+                gross.append(t["net"][m] + 2 * COST_SIDE + fund_frac)
+                rows.append({"des_de": str(b.date()), "fins": str(c.date()), "parametres": params_text(fam, params[ci], bar_h),
                              "rendiment_pct": round((st["pnl"] - cost) / CAPITAL * 100, 1), "operacions": st["n"]})
             vals = np.array([v for _, v in curve])
             chain_pnl = bal - CAPITAL
@@ -417,6 +447,8 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
             monkey = []
             for r in range(MONKEY_RUNS):
                 pnl, prev = 0.0, None
+                if len(sizings) == 1:
+                    msims.clear()                            # una sola mida: no cal guardar-les (estalvia memòria)
                 for wi, (a, b, c) in enumerate(windows):
                     ci = chosen[wi]
                     if (r, ci) not in msims:
@@ -454,6 +486,9 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
                     "guany_per_caiguda": round(chain_pnl / CAPITAL / chain_dd, 2) if chain_dd > 0 else None,
                     "exposicio_mitjana_pct": round(float(np.mean(expo)) * 100) if expo else None,
                     "operacions_setmana": round(chain_n / (years * 52), 1),
+                    "operacions_dia": round(chain_n / (years * 365), 1),
+                    "brut_mitja_pct": round(float(np.concatenate(gross).mean() * 100), 3) if chain_n else None,
+                    "costos_anuals_pct_capital": round((fees + funding + switch_cost) / CAPITAL / years * 100, 1),
                     "llargues_pct": round(longs / chain_n * 100) if chain_n else None,
                     "guanyadores_pct": round(float((nets > 0).mean() * 100), 1) if chain_n else None,
                     "net_mitja_pct": round(float(nets.mean() * 100), 3) if chain_n else None,
@@ -470,9 +505,10 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
                          "millor_pct": round(float(monkey.max()) / CAPITAL * 100, 1),
                          "pitjor_pct": round(float(monkey.min()) / CAPITAL * 100, 1),
                          "percentil_real": round(pctile)},
-                "reserva": {"des_de": str(t_hold.date()), "fins": str(idx[-1].date()), "parametres": params_text(fam, params[hi]),
+                "reserva": {"des_de": str(t_hold.date()), "fins": str(idx[-1].date()), "parametres": params_text(fam, params[hi], bar_h),
                             "rendiment_pct": round(hold["pnl"] / CAPITAL * 100, 1), "caiguda_pct": round(hold["dd"] * 100, 1),
                             "operacions": hold["n"], "operacions_setmana": round(hold["n"] / (hold_days / 7), 1),
+                            "operacions_dia": round(hold["n"] / hold_days, 1),
                             "aturada": str(idx[hold["stopped_bar"]].date()) if hold["stopped_bar"] is not None else None,
                             "guanyadores_pct": round(float((hnets > 0).mean() * 100), 1) if len(hnets) else None},
                 "criteri": [{"text": f"Guanya diners als períodes no vistos, amb almenys {MIN_TRADES_WF} operacions ({chain_n} operacions, {chain_pnl / CAPITAL * 100:+.1f} %)", "ok": ok1},
@@ -482,7 +518,7 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
             })
 
     btc = syms["BTC/EUR"].C if "BTC/EUR" in syms else first.C
-    btc_curve = _thin([(str(idx[i].date()), round(float(CAPITAL * btc[i] / btc[wf_from]), 2)) for i in range(wf_from, wf_to, 6)])
+    btc_curve = _thin([(str(idx[i].date()), round(float(CAPITAL * btc[i] / btc[wf_from]), 2)) for i in range(wf_from, wf_to, max(1, int(6 / bar_h)))])
     listed = {s.replace("/EUR", ""): str(v.idx[int(np.argmax(np.isfinite(v.C)))].date()) for s, v in syms.items()
               if not np.isfinite(v.C[0])}                   # valors que encara no cotitzaven a l'inici
     best = [f for f in fams_out if f["superat"]]
@@ -490,6 +526,7 @@ def run_lab(syms: dict, dd_limit: float, progress=lambda pct, msg: None, familie
         "versio": 5,
         "mida_volatilitat_objectiu_pct": VOL_TARGET * 100,
         "generat": datetime.now(timezone.utc).isoformat(),
+        "espelma_minuts": round(bar_h * 60),
         "periode": {"des_de": str(idx[WARMUP].date()), "fins": str(idx[-1].date())},
         "valors": [s.replace("/EUR", "") for s in syms],
         "cotitzen_des_de": listed,
@@ -544,6 +581,27 @@ def load_past(synthetic_data: bool = False) -> dict:
     return {s: Sym(raw.pop(s).reindex(base).ffill()) for s in list(raw)}   # el ffill no omple abans del primer preu
 
 
+def load_fast(synthetic_data: bool = False) -> dict:
+    """Espelmes de 15 minuts dels 3 últims anys (les mateixes dades ja descarregades), sense agrupar."""
+    if synthetic_data:
+        raw = synthetic(SYMBOLS, SRC_TF, DAYS, seed=17)
+    else:
+        raw = {}
+        cache = os.path.join(LAB_DIR, "dades")
+        for k, s in enumerate(SYMBOLS):
+            write_status(estat="descarregant", mode="rapid", pct=round(k / len(SYMBOLS) * 100, 1),
+                         missatge=f"Carregant 3 anys d'espelmes de 15 minuts de {s.replace('/EUR', '')}")
+            try:
+                raw[s] = fetch_history(s, SRC_TF, DAYS, cache_dir=cache, quote="USDT")
+            except Exception as e:
+                log.warning("Salto %s: %s", s, e)
+        if "BTC/EUR" not in raw:
+            raise RuntimeError("No s'han pogut carregar les dades de Bitcoin")
+    base = raw["BTC/EUR"].index
+    cols = ["open", "high", "low", "close"]
+    return {s: Sym(raw.pop(s)[cols].reindex(base).ffill().bfill()) for s in list(raw)}
+
+
 def load(synthetic_data: bool = False) -> dict:
     if synthetic_data:
         raw = synthetic(SYMBOLS, SRC_TF, DAYS, seed=13)
@@ -568,18 +626,21 @@ def load(synthetic_data: bool = False) -> dict:
     return syms
 
 
-def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = False) -> dict:
+def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = False, fast: bool = False) -> dict:
     t0 = time.time()
-    mode = "passat" if past else "actual"
+    mode = "rapid" if fast else "passat" if past else "actual"
     write_status(estat="descarregant", mode=mode, pct=0, missatge="Preparant les dades")
     try:
-        syms = load_past(synthetic) if past else load(synthetic)
-        res = run_lab(syms, dd_limit_pct / 100, lambda pct, msg: write_status(estat="provant", mode=mode, pct=pct, missatge=msg),
-                      families=PAST_FAMILIES if past else None)
+        prog = lambda pct, msg: write_status(estat="provant", mode=mode, pct=pct, missatge=msg)   # noqa: E731
+        if fast:
+            res = run_lab(load_fast(synthetic), dd_limit_pct / 100, prog, family_defs=FAST_FAMILIES, sizings=["fixa"])
+        else:
+            syms = load_past(synthetic) if past else load(synthetic)
+            res = run_lab(syms, dd_limit_pct / 100, prog, families=PAST_FAMILIES if past else None)
         res["mode"] = mode
         res["durada_min"] = round((time.time() - t0) / 60, 1)
         res["dades_sintetiques"] = synthetic
-        out = RESULTS_PAST_FILE if past else RESULTS_FILE
+        out = RESULTS_FAST_FILE if fast else RESULTS_PAST_FILE if past else RESULTS_FILE
         tmp = out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(res, f, default=str)

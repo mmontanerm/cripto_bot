@@ -32,6 +32,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAB_STATUS = os.path.join(LAB_DIR, "estat_wf.json")
 LAB_RESULTS = os.path.join(LAB_DIR, "resultats_wf.json")
 LAB_RESULTS_PAST = os.path.join(LAB_DIR, "resultats_wf_passat.json")
+LAB_RESULTS_FAST = os.path.join(LAB_DIR, "resultats_wf_rapid.json")
+LAB_MODES = {"actual": [], "passat": ["--passat"], "rapid": ["--rapid"]}
 # Fitxers dels laboratoris retirats: s'esborren en arrencar perquè no quedi cap resultat antic
 OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json",
                  "estat_graella.json", "resultats_graella.json"]
@@ -163,25 +165,27 @@ def _status(path: str) -> dict:
 
 def lab_state() -> dict:
     return {"estat": _status(LAB_STATUS), "resultats": _read_json(LAB_RESULTS) or None,
-            "resultats_passat": _read_json(LAB_RESULTS_PAST) or None}
+            "resultats_passat": _read_json(LAB_RESULTS_PAST) or None,
+            "resultats_rapid": _read_json(LAB_RESULTS_FAST) or None}
 
 
-def lab_start(dd: float, past: bool = False) -> tuple[int, str]:
+def lab_start(dd: float, mode: str = "actual") -> tuple[int, str]:
+    mode = mode if mode in LAB_MODES else "actual"
     with _lab_lock:
         if _status(LAB_STATUS).get("estat") in ("descarregant", "provant"):
             return 409, "Ja hi ha una prova en marxa. Espera que acabi."
         os.makedirs(LAB_DIR, exist_ok=True)
         with open(LAB_STATUS, "w", encoding="utf-8") as f:
-            json.dump({"estat": "descarregant", "mode": "passat" if past else "actual", "pct": 0, "missatge": "Arrencant la prova",
+            json.dump({"estat": "descarregant", "mode": mode, "pct": 0, "missatge": "Arrencant la prova",
                        "actualitzat": datetime.now(timezone.utc).isoformat(), "pid": os.getpid()}, f)
 
         def lower_priority():  # que el laboratori no alenteixi el bot
             os.nice(10)
-        cmd = [sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd)] + (["--passat"] if past else [])
+        cmd = [sys.executable, os.path.join(ROOT, "run_lab.py"), "--dd", str(dd)] + LAB_MODES[mode]
         subprocess.Popen(cmd, cwd=ROOT,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
                          preexec_fn=lower_priority)
-        log.info("Laboratori llarg/curt llançat des del panell (%s, caiguda màxima acceptada %s%%)", "passat" if past else "actual", dd)
+        log.info("Laboratori llarg/curt llançat des del panell (%s, caiguda màxima acceptada %s%%)", mode, dd)
         return 202, "Prova en marxa."
 
 
@@ -287,7 +291,8 @@ class Handler(BaseHTTPRequestHandler):
                 dd = max(5.0, min(50.0, float(body.get("dd", 25))))
             except Exception:
                 dd = 25.0
-            code, msg = lab_start(dd, bool(body.get("passat")))
+            mode = str(body.get("mode") or ("passat" if body.get("passat") else "actual"))
+            code, msg = lab_start(dd, mode)
         else:
             return self._send(404, b"not found", "text/plain")
         return self._send(code, json.dumps({"missatge": msg}).encode(), "application/json")
