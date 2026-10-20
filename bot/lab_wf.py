@@ -115,10 +115,10 @@ ALL_FAMILIES = {**FAMILIES, **FAST_FAMILIES, **SCAN_FAMILY}
 
 # PROVA D'ESCALAT PROPORCIONAL (demanada el 20-10-2026): l'estratègia del bot amb TOTS els paràmetres escalats
 # a la vegada. El bot fa servir espelmes d'1 hora i compta en espelmes: canal de 168, sortida de 84, ATR de 24 i
-# stop a 4 × ATR. Aquí es manté exactament el mateix nombre d'espelmes i només s'escurça la durada de cada
-# espelma (de 60 a 5 minuts). Així el canal, la sortida, l'ATR i el stop s'escurcen tots en la mateixa proporció.
+# stop a 4 × ATR. Aquí es manté exactament el mateix nombre d'espelmes i només canvia la durada de cada
+# espelma (de 4 hores a 5 minuts). Així el canal, la sortida, l'ATR i el stop s'escurcen tots en la mateixa proporció.
 # Els costos per operació (0,14 %) no es poden escalar: són els mateixos en totes les mides.
-SCALE_CANDLES_MIN = [60, 45, 30, 20, 15, 10, 5]
+SCALE_CANDLES_MIN = [240, 120, 90, 60, 45, 30, 20, 15, 10, 5]   # 90-240 min afegits el 20-10-2026 (direcció contrària: menys operacions)
 SCALE_PERIODS = {"passat": (PAST_START, PAST_END), "recent": ("2023-10-01", None)}
 RESULTS_SCALE_FILE = os.path.join(LAB_DIR, "resultats_escalat.json")
 
