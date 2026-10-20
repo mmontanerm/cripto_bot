@@ -100,7 +100,9 @@ Al panell hi ha un sol laboratori: busca paràmetres per guanyar **amb les pujad
 2. superar el 95% de les simulacions amb entrades a l'atzar;
 3. guanyar a la reserva final sense passar de la caiguda acceptada ni fer saltar l'aturada.
 
-**Prova ràpida (10-12 operacions al dia):** les mateixes regles llarg/curt amb espelmes de 15 minuts i canals de 4 a 24 hores (tendència ràpida i reversió ràpida), amb els mateixos costos, mètode i criteri. Mostra el guany per operació abans i després de costos i quina part del capital s'emporten els costos cada any. Botó "Fes la prova ràpida" al panell, o `python run_lab.py --rapid`.
+**Terme mig:** les regles exactes del bot en directe (1 hora, sortida amb canal de la meitat, stop 4 × ATR de 24 h, 60 % del capital, mateixos costos), sense optimitzar, canviant només la durada del canal d'entrada de 168 h a 6 h. Es prova el 2020–2023 i el 2023–2026, cada durada contra 25 simulacions a l'atzar. Comprovat: amb els mateixos preus, el laboratori i el bot fan les mateixes operacions. Botó "Fes la prova del terme mig", o `python run_lab.py --terme-mig`.
+
+**Prova ràpida (10-12 operacions al dia):** *No fa servir les regles del bot:* ATR de 6 h, stops d'1,5 a 3 × ATR, 100 % del capital, paràmetres triats a cada període i també la reversió. les mateixes regles llarg/curt amb espelmes de 15 minuts i canals de 4 a 24 hores (tendència ràpida i reversió ràpida), amb els mateixos costos, mètode i criteri. Mostra el guany per operació abans i després de costos i quina part del capital s'emporten els costos cada any. Botó "Fes la prova ràpida" al panell, o `python run_lab.py --rapid`.
 
 **Prova amb anys no vistos (2020–2023):** la tendència llarg/curt, amb exactament les mateixes regles, paràmetres possibles, costos i criteri, sobre dades que el laboratori principal no ha fet servir mai (gener del 2020 – setembre del 2023, amb el mercat alcista del 2021 i el baixista del 2022). Fixada abans de veure'n el resultat. Botó "Fes la prova 2020–2023" al panell, o `python run_lab.py --passat`.
 

@@ -621,6 +621,7 @@ const labIntro=`<p>Busca els millors paràmetres per guanyar <b>amb les pujades 
   <p class="sub" style="margin:0 0 8px">Criteri d'èxit, fixat abans de la prova: guanyar als períodes no vistos amb almenys 100 operacions, superar el 95 % de les simulacions a l'atzar, i guanyar als 4 mesos reservats sense passar de la caiguda acceptada.</p>`;
 const pastIntro=`<p>El laboratori principal només ha fet servir dades des de l'octubre del 2023. Aquesta prova agafa la <b>tendència llarg/curt</b> i la passa per anys que no ha vist mai: <b>del gener del 2020 al setembre del 2023</b>, que inclouen un mercat molt alcista (2021) i un de molt baixista (2022).</p>
   <p><b>Res no s'ha ajustat després de veure els resultats anteriors:</b> mateixes regles, mateixos 24 paràmetres possibles, mateixos costos, mateixa prova del mico i mateix criteri d'èxit. Cada estratègia es prova dues vegades: amb <b>mida fixa</b> i amb <b>mida segons la volatilitat</b> de cada moneda (cada posició es redueix perquè la seva volatilitat horària no passi del 0,5 %, sense apalancament). Si torna a quedar per sobre del 95 % de les simulacions a l'atzar, hi haurà indicis seriosos d'avantatge; si no, el +46 % del laboratori principal va ser bàsicament sort. La primera vegada descarrega 4 anys de dades: tarda uns 5-10 minuts.</p>`;
+const fastDiff=`<p class="note"><b>Atenció:</b> aquesta prova no fa servir les mateixes regles que el bot. A més de les espelmes de 15 minuts, l'ATR es calcula amb 6 hores (no 24), els stops són més ajustats (1,5 a 3 × ATR, no 4), fa servir el 100 % del capital (no el 60 %), tria els paràmetres a cada període i també prova una estratègia diferent (la reversió). Per comparar amb el bot, mira la prova del terme mig.</p>`;
 const famColor={tendencia:"#7A3E8E",reversio:"#C0702A",regim:"#2B7A78",tendencia_rapida:"#C2185B",reversio_rapida:"#00838F"};
 const fastIntro=`<p>Les mateixes regles llarg/curt, però amb <b>espelmes de 15 minuts</b> i canals molt més curts (de 4 a 24 hores), per arribar a unes <b>10-12 operacions al dia</b> entre els 6 valors. Prova la <b>tendència ràpida</b> (ruptures) i la <b>reversió ràpida</b> (tornada a la mitjana), amb els mateixos costos reals, el mateix walk-forward, la mateixa prova del mico i el mateix criteri d'èxit, sobre els 3 últims anys.</p>
   <p>Atenció als costos: cada operació en paga un 0,14 %. Amb 10-12 operacions al dia, això són unes 4.000 operacions l'any, i cada una ha de guanyar de mitjana més d'un 0,14 % abans de costos només per quedar-se igual. La prova mostra el guany abans i després de costos perquè es vegi on van els diners. Tarda uns 5-15 minuts.</p>`;
@@ -670,30 +671,53 @@ function labBlock(res, key){
   const draw=()=>drawLines(`labchart-${key}`,`lab-legend-${key}`,[...F.map(f=>({nom:f.nom,c:fCol(f),pts:f.walk_forward.corba,w:fVol(f)?1.4:1.8,dash:fVol(f)?"7 3":""})),{nom:"Comprar Bitcoin",c:"var(--muted)",pts:res.btc.corba,w:1.2,dash:"5 4"}]);
   return {html, draw};
 }
+const scanIntro=`<p>Les <b>regles exactes del bot en directe</b> (espelmes d'1 hora, sortida amb un canal de la meitat de durada, stop a 4 × ATR de 24 hores, el 60 % del capital repartit entre els 6 valors i els mateixos costos), sense optimitzar res. <b>L'única cosa que canvia és la durada del canal d'entrada</b>: des dels 7 dies del bot (168 h) fins a 6 hores. Com més curt el canal, més operacions.</p>
+  <p>Es prova en dos períodes separats (2020–2023 i 2023–2026) i cada durada es compara amb 25 simulacions amb entrades a l'atzar. He comprovat que, amb els mateixos preus, el laboratori i el bot fan exactament les mateixes operacions. Tarda uns 5-10 minuts.</p>`;
+function scanBlock(res){
+  const synth=res.dades_sintetiques?`<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>`:"";
+  const ok=res.resum.filter(r=>r.supera_tots).map(r=>r.canal_h);
+  const head=`<div class="winner" style="border-color:${ok.length?"var(--gain)":"var(--amber)"}">
+    <div class="sub" style="margin:0">Regles del bot · només canvia la durada del canal</div>
+    <h3>${ok.length?`El canal de ${ok.map(n=>n+" h").join(", ")} guanya i supera l'atzar en tots dos períodes`:"Cap durada guanya i supera l'atzar en tots dos períodes"}</h3>
+    <div class="sub" style="margin:0">Per superar-ho cal guanyar diners, fer almenys 100 operacions i quedar per sobre del 95 % de les simulacions amb entrades a l'atzar, tant el 2020–2023 com el 2023–2026.</div></div>`;
+  const table=(key,title)=>{ const P=res.periodes[key]; if(!P) return "";
+    return `<h3 class="lab-h3">${title} · ${dmy(P.des_de)} – ${dmy(P.fins)} <span class="sub" style="font-weight:400">(Bitcoin ${fmtP(P.btc_pct)})</span></h3>
+    <div class="scroll"><table class="cmp wide"><thead><tr><th>Canal (entrada / sortida)</th><th>Operacions/dia</th><th>Resultat</th><th>Pitjor caiguda</th><th>Per operació abans de costos</th><th>Després de costos</th><th>Costos a l'any</th><th>Millor que l'atzar</th></tr></thead><tbody>
+    ${P.files.map(r=>`<tr${r.bot?' style="background:var(--sunk)"':""}><td><b>${r.canal_h} h</b> / ${r.sortida_h} h${r.bot?' <span class="applied">el bot</span>':""}${r.supera?' <span class="applied">supera</span>':""}</td>
+      <td>${fmtNum(r.operacions_dia,1)}</td><td class="${sign(r.rendiment_pct)}"><b>${fmtP(r.rendiment_pct)}</b><span class="pm">${fmtP(r.anual_pct)} anual</span></td>
+      <td>${fmtNum(r.caiguda_pct,1)} %${r.fre?`<span class="pm">el fre del ${res.caiguda_maxima_acceptada_pct} % hauria saltat el ${dmy(r.fre)}</span>`:""}</td>
+      <td class="${sign(r.brut_mitja_pct)}">${r.brut_mitja_pct==null?"—":pct(r.brut_mitja_pct,2)}</td><td class="${sign(r.net_mitja_pct)}">${r.net_mitja_pct==null?"—":pct(r.net_mitja_pct,2)}</td>
+      <td>${fmtNum(r.costos_anuals_pct_capital,1)} % del capital</td><td>${fmtNum(r.mico_percentil,0)} %<span class="pm">atzar: mediana ${fmtP(r.mico_mediana_pct)}</span></td></tr>`).join("")}
+    </tbody></table></div>`; };
+  return synth+head+table("passat","2020–2023")+table("recent","2023–2026")
+    +`<p class="note">"Resultat": guany total del període amb el 60 % del capital, sense aturar-se pel fre (la columna de caiguda diu si hauria saltat). "Per operació": guany mitjà de cada operació sobre els diners de la posició; els costos (0,14 % per operació més el finançament dels llargs) són la diferència entre les dues columnes. "Millor que l'atzar": per sobre de quin percentatge de les 25 simulacions amb entrades a l'atzar queda; cal el 95 %.</p>`;
+}
 function renderLab(){
   const body=$("lab-body"); if(!lab) return;
   const st=lab.estat||{}, ok=r=>r&&r.versio>=4?r:null;
-  const res=ok(lab.resultats), past=ok(lab.resultats_passat), fast=ok(lab.resultats_rapid);
+  const res=ok(lab.resultats), past=ok(lab.resultats_passat), fast=ok(lab.resultats_rapid), scan=lab.resultats_terme_mig?.versio===6?lab.resultats_terme_mig:null;
   const running=st.estat==="descarregant"||st.estat==="provant", runMode=running?(st.mode||"actual"):null;
   clearTimeout(labTimer); if(running) labTimer=setTimeout(loadLab,5000);
-  const last=[res,past,fast].filter(Boolean).map(r=>r.generat).sort().pop();
+  const last=[res,past,fast,scan].filter(Boolean).map(r=>r.generat).sort().pop();
   $("lab-when").textContent = last && !running ? `Última prova ${ago(last)}` : "";
   const prog=`<p>${esc(st.missatge||"Treballant…")}</p><div class="bar"><i style="width:${st.pct||0}%"></i></div>
       <p>${fmtNum(st.pct||0,0)} % fet. Pots tancar el panell: la prova continua i els resultats apareixeran aquí.</p>`;
   const errMsg=(st.estat==="error"||st.estat==="interrompuda")?`<p class="warn">${esc(st.missatge)}</p>`:"";
   const fb=fast?labBlock(fast,"rapid"):null, pb=past?labBlock(past,"passat"):null, mb=res?labBlock(res,"actual"):null;
-  const lim=(fast||past||res||{}).caiguda_maxima_acceptada_pct;
+  const lim=(scan||fast||past||res||{}).caiguda_maxima_acceptada_pct;
   const fold=(title,html)=>`<details><summary>${title}</summary>${html}</details>`;
-  const fastSec=`<h3 class="lab-h3" style="margin-top:6px">Prova ràpida: 10-12 operacions al dia (espelmes de 15 minuts)</h3>`
-    +(runMode==="rapid"?prog:(fast?fb.html:fastIntro));
+  const scanSec=`<h3 class="lab-h3" style="margin-top:6px">Terme mig: el bot amb canals més curts</h3>`
+    +(runMode==="terme_mig"?prog:(scan?scanBlock(scan)+fold("Com es fa aquesta prova",scanIntro):scanIntro));
+  const fastSec=`<h3 class="lab-h3" style="margin-top:22px">Prova ràpida: 10-12 operacions al dia (espelmes de 15 minuts)</h3>`
+    +(runMode==="rapid"?prog:(fast?fold("Veure els resultats de la prova ràpida",fb.html+fastDiff):fastIntro+fastDiff));
   const pastSec=`<h3 class="lab-h3" style="margin-top:22px">Prova de la tendència amb anys no vistos (2020–2023)</h3>`
     +(runMode==="passat"?prog:(past?fold("Veure els resultats de la prova 2020–2023",pb.html):pastIntro));
   const mainSec=`<h3 class="lab-h3" style="margin-top:22px">Laboratori principal (2023–2026)</h3>`
     +(runMode==="actual"?prog:(res?fold(`Veure els resultats del laboratori principal${res.guanyadora?"":" · cap estratègia supera el criteri"}`,mb.html):labIntro));
   const btn=(mode,has,label,cls)=>`<button class="btn ${cls} lab-go" ${running?"disabled":""} onclick="startLab('${mode}')">${has?"Torna a fer ":"Fes "}${label}</button>`;
   const ctrl=`<div class="controls" style="margin-top:14px">${labSelect(lim)}
-      ${btn("rapid",fast,"la prova ràpida","")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
-  body.innerHTML=errMsg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+fastSec+pastSec+mainSec+ctrl;
+      ${btn("terme_mig",scan,"la prova del terme mig","")}${btn("rapid",fast,"la prova ràpida","ghost")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
+  body.innerHTML=errMsg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+scanSec+fastSec+pastSec+mainSec+ctrl;
   const draw=()=>{ if(fb&&runMode!=="rapid") fb.draw(); if(pb&&runMode!=="passat") pb.draw(); if(mb&&runMode!=="actual") mb.draw(); };
   draw();
   body.querySelectorAll("details").forEach(d=>d.addEventListener("toggle",draw));
