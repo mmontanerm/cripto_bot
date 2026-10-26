@@ -35,7 +35,8 @@ LAB_RESULTS_PAST = os.path.join(LAB_DIR, "resultats_wf_passat.json")
 LAB_RESULTS_FAST = os.path.join(LAB_DIR, "resultats_wf_rapid.json")
 LAB_RESULTS_SCAN = os.path.join(LAB_DIR, "resultats_terme_mig.json")
 LAB_RESULTS_SCALE = os.path.join(LAB_DIR, "resultats_escalat.json")
-LAB_MODES = {"actual": [], "passat": ["--passat"], "rapid": ["--rapid"], "terme_mig": ["--terme-mig"], "escalat": ["--escalat"]}
+LAB_RESULTS_TP = os.path.join(LAB_DIR, "resultats_objectius.json")
+LAB_MODES = {"actual": [], "passat": ["--passat"], "rapid": ["--rapid"], "terme_mig": ["--terme-mig"], "escalat": ["--escalat"], "objectius": ["--objectius"]}
 # Fitxers dels laboratoris retirats: s'esborren en arrencar perquè no quedi cap resultat antic
 OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json",
                  "estat_graella.json", "resultats_graella.json"]
@@ -170,7 +171,8 @@ def lab_state() -> dict:
             "resultats_passat": _read_json(LAB_RESULTS_PAST) or None,
             "resultats_rapid": _read_json(LAB_RESULTS_FAST) or None,
             "resultats_terme_mig": _read_json(LAB_RESULTS_SCAN) or None,
-            "resultats_escalat": _read_json(LAB_RESULTS_SCALE) or None}
+            "resultats_escalat": _read_json(LAB_RESULTS_SCALE) or None,
+            "resultats_objectius": _read_json(LAB_RESULTS_TP) or None}
 
 
 def lab_start(dd: float, mode: str = "actual") -> tuple[int, str]:

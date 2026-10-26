@@ -100,6 +100,8 @@ Al panell hi ha un sol laboratori: busca paràmetres per guanyar **amb les pujad
 2. superar el 95% de les simulacions amb entrades a l'atzar;
 3. guanyar a la reserva final sense passar de la caiguda acceptada ni fer saltar l'aturada.
 
+**Objectius de guany:** les regles exactes del bot amb un objectiu de guany fix (0,5 %, 1 %, 2 %, 3 %, 5 % o 10 %, abans de costos) comparat amb no tenir-ne (el bot actual). Si el preu continua fora del canal després de tancar, hi torna a entrar. Botó "Fes la prova d'objectius", o `python run_lab.py --objectius`.
+
 **Escalat proporcional:** les regles del bot amb tots els paràmetres escalats a la vegada: mateix nombre d'espelmes (canal 168, sortida 84, ATR 24, stop 4 × ATR) amb espelmes de 4 h, 2 h, 90, 60, 45, 30, 20, 15, 10 i 5 minuts. Fa servir espelmes de 5 minuts de Binance (2020–2026, desades comprimides; la primera descàrrega tarda 30-40 minuts). La fila de 60 minuts és idèntica al bot. Botó "Fes l'escalat proporcional", o `python run_lab.py --escalat`.
 
 **Terme mig:** les regles exactes del bot en directe (1 hora, sortida amb canal de la meitat, stop 4 × ATR de 24 h, 60 % del capital, mateixos costos), sense optimitzar, canviant només la durada del canal d'entrada de 168 h a 6 h. Es prova el 2020–2023 i el 2023–2026, cada durada contra 25 simulacions a l'atzar. Comprovat: amb els mateixos preus, el laboratori i el bot fan les mateixes operacions. Botó "Fes la prova del terme mig", o `python run_lab.py --terme-mig`.
