@@ -5,6 +5,8 @@
     python run_lab.py --passat       # tendència amb dades del 2020 al 2023 (anys no vistos)
     python run_lab.py --rapid        # espelmes de 15 minuts, unes 10-12 operacions al dia
     python run_lab.py --terme-mig    # regles exactes del bot amb canals de 168 h a 6 h
+    python run_lab.py --micro        # micro-guanys amb ordres limitades
+    python run_lab.py --correlacio   # límit de posicions en la mateixa direcció
     python run_lab.py --objectius    # regles del bot amb objectius de guany fixos
     python run_lab.py --escalat      # regles del bot amb tots els paràmetres escalats (espelmes de 60 a 5 min)
     python run_lab.py --synthetic    # dades inventades, només per comprovar que funciona
@@ -28,6 +30,8 @@ if __name__ == "__main__":
     ap.add_argument("--passat", action="store_true", help="prova la tendència amb dades del 2020 al 2023")
     ap.add_argument("--terme-mig", dest="terme_mig", action="store_true",
                     help="regles exactes del bot, només canvia la durada del canal (168 h a 12 h)")
+    ap.add_argument("--micro", action="store_true", help="micro-guanys amb ordres limitades")
+    ap.add_argument("--correlacio", action="store_true", help="regles del bot amb límit de posicions en la mateixa direcció")
     ap.add_argument("--objectius", action="store_true",
                     help="regles del bot amb un objectiu de guany fix (0,5 % a 10 %)")
     ap.add_argument("--escalat", action="store_true",
@@ -36,4 +40,4 @@ if __name__ == "__main__":
     a = ap.parse_args()
     setup("lab")
     cfg = ConfigWatcher("config.yaml").cfg
-    lab_wf.main(cfg, max(5.0, min(50.0, a.dd)), synthetic=a.synthetic, past=a.passat, fast=a.rapid, scan=a.terme_mig, scale=a.escalat, tp=a.objectius)
+    lab_wf.main(cfg, max(5.0, min(50.0, a.dd)), synthetic=a.synthetic, past=a.passat, fast=a.rapid, scan=a.terme_mig, scale=a.escalat, tp=a.objectius, micro=a.micro, corr=a.correlacio)

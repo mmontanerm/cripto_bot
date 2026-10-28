@@ -100,6 +100,10 @@ Al panell hi ha un sol laboratori: busca paràmetres per guanyar **amb les pujad
 2. superar el 95% de les simulacions amb entrades a l'atzar;
 3. guanyar a la reserva final sense passar de la caiguda acceptada ni fer saltar l'aturada.
 
+**Micro-guanys amb ordres limitades:** ordres limitades a les bandes de Bollinger (20 espelmes, 2 desviacions) amb objectiu petit (0,3 %, 0,5 % o 1 %) i stop ajustat (0,5 %, 1 % o 2 %), espelmes de 15 min i 1 h. Ordres limitades al 0,02 % (creador de mercat), stops a mercat al 0,07 %. Una ordre limitada només s'executa si el preu la travessa. També mostra el resultat pagant ordres a mercat. `python run_lab.py --micro`.
+
+**Límit de posicions en la mateixa direcció:** les regles del bot amb un màxim de 6 (sense límit), 3, 2 o 1 posicions alhora en la mateixa direcció. `python run_lab.py --correlacio`.
+
 **Objectius de guany:** les regles exactes del bot amb un objectiu de guany fix (0,5 %, 1 %, 2 %, 3 %, 5 % o 10 %, abans de costos) comparat amb no tenir-ne (el bot actual). Si el preu continua fora del canal després de tancar, hi torna a entrar. Botó "Fes la prova d'objectius", o `python run_lab.py --objectius`.
 
 **Escalat proporcional:** les regles del bot amb tots els paràmetres escalats a la vegada: mateix nombre d'espelmes (canal 168, sortida 84, ATR 24, stop 4 × ATR) amb espelmes de 4 h, 2 h, 90, 60, 45, 30, 20, 15, 10 i 5 minuts. Fa servir espelmes de 5 minuts de Binance (2020–2026, desades comprimides; la primera descàrrega tarda 30-40 minuts). La fila de 60 minuts és idèntica al bot. Botó "Fes l'escalat proporcional", o `python run_lab.py --escalat`.

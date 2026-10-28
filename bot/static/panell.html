@@ -678,22 +678,39 @@ const scaleIntro=`<p>L'estratègia del bot amb <b>tots els paràmetres escalats 
   <p><b>La primera vegada ha de descarregar unes 2,7 milions d'espelmes de 5 minuts</b> (6 valors, 2020–2026): pot tardar 30-40 minuts. Després queden desades i la prova tarda uns 10-15 minuts.</p>`;
 const tpIntro=`<p>Les <b>regles exactes del bot</b> (espelmes d'1 hora, canal de 168 h, sortida de 84 h, stop a 4 × ATR, el 60 % del capital i els mateixos costos) amb un <b>objectiu de guany fix</b>: l'operació es tanca quan guanya aquest percentatge (abans de costos). Es proven objectius del 0,5 %, 1 %, 2 %, 3 %, 5 % i 10 %, i també sense objectiu, que és el que fa ara el bot.</p>
   <p>Si després de tancar per objectiu el preu continua fora del canal, el bot hi torna a entrar a l'hora següent, com faria en directe. Si en una mateixa hora el preu toca el stop i l'objectiu, es compta el stop (el cas pitjor). Dos períodes (2020–2023 i 2023–2026) i 25 simulacions a l'atzar per a cada objectiu. Tarda uns 5-10 minuts.</p>`;
-function scanBlock(res){
-  const scale=res.mode==="escalat", tpm=res.mode==="objectius";
+const microIntro=`<p><b>Molts guanys petits amb ordres limitades.</b> Quan el bot no té posició en un valor, a cada tancament d'espelma deixa dues ordres limitades per a l'espelma següent: una de compra a la banda baixa de Bollinger (20 espelmes, 2 desviacions) i una de venda en curt a la banda alta. Si el preu hi arriba, entra; llavors posa un <b>objectiu petit</b> (0,3 %, 0,5 % o 1 %) amb una ordre limitada i un <b>stop ajustat</b> (0,5 %, 1 % o 2 %). Si al cap de 16 espelmes no ha passat res, tanca. Es prova amb espelmes de 15 minuts i d'1 hora: 18 combinacions.</p>
+  <p><b>Costos:</b> les ordres limitades (entrada i objectiu) paguen la comissió de creador de mercat, un 0,02 %; els stops i els tancaments per temps paguen un 0,07 %. Una operació que acaba a l'objectiu costa un 0,04 % en total, unes 3,5 vegades menys que ara. La taula també mostra què passaria pagant ordres a mercat.</p>
+  <p><b>Per no enganyar-nos:</b> una ordre limitada només s'executa si el preu la travessa (no n'hi ha prou que la toqui); a l'espelma d'entrada es compta el stop si hi arriba però mai l'objectiu; si una espelma toca el stop i l'objectiu, es compta el stop; i cada combinació es compara amb 25 simulacions que entren a l'atzar. Dos períodes (2020–2023 i 2023–2026). Fa servir les espelmes de 5 minuts ja descarregades. Tarda uns 30-45 minuts.</p>`;
+const corrIntro=`<p>Les <b>regles exactes del bot</b>, amb un <b>màxim de posicions obertes alhora en la mateixa direcció</b>: 6 (el bot actual, sense límit), 3, 2 o 1. Les criptos es mouen juntes: el 22 d'octubre el bot va obrir 4 llargs en una hora i tots van tocar el stop, com si fos una sola aposta de 400 €. Simulació hora a hora de tots els valors junts; amb el límit de 6 dona exactament el mateix que el bot. Si diversos valors donen senyal a la mateixa hora i no hi ha lloc per a tots, entren per l'ordre de la llista (BTC, ETH, SOL, XRP, DOGE, ADA). Tarda un parell de minuts.</p>`;
+function corrBlock(res){
+  const table=(key,title)=>{ const P=res.periodes[key]; if(!P) return "";
+    return `<h3 class="lab-h3">${title} · ${dmy(P.des_de)} – ${dmy(P.fins)} <span class="sub" style="font-weight:400">(Bitcoin ${fmtP(P.btc_pct)})</span></h3>
+    <div class="scroll"><table class="cmp wide"><thead><tr><th>Màxim en la mateixa direcció</th><th>Operacions/setmana</th><th>Resultat</th><th>Pitjor caiguda</th><th>Guany / caiguda</th><th>Guanyadores</th><th>Net per operació</th></tr></thead><tbody>
+    ${P.files.map(r=>`<tr${r.bot?' style="background:var(--sunk)"':""}><td><b>${r.max_mateixa_direccio===6?"Sense límit (6)":r.max_mateixa_direccio}</b>${r.bot?' <span class="applied">el bot</span>':""}</td>
+      <td>${fmtNum(r.operacions_setmana,1)}</td><td class="${sign(r.rendiment_pct)}"><b>${fmtP(r.rendiment_pct)}</b><span class="pm">${fmtP(r.anual_pct)} anual</span></td>
+      <td>${fmtNum(r.caiguda_pct,1)} %${r.fre?`<span class="pm">el fre del ${res.caiguda_maxima_acceptada_pct} % hauria saltat el ${dmy(r.fre)}</span>`:""}</td>
+      <td><b>${r.guany_per_caiguda==null?"—":fmtNum(r.guany_per_caiguda,2)}</b></td><td>${r.guanyadores_pct==null?"—":fmtNum(r.guanyadores_pct,0)+" %"}</td>
+      <td class="${sign(r.net_mitja_pct)}">${r.net_mitja_pct==null?"—":pct(r.net_mitja_pct,2)}</td></tr>`).join("")}</tbody></table></div>`; };
   const synth=res.dades_sintetiques?`<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>`:"";
-  const ok=res.resum.filter(r=>r.supera_tots).map(r=>tpm?(r.objectiu_pct==null?"sense objectiu":`objectiu del ${fmtNum(r.objectiu_pct,1)} %`):scale?`espelmes de ${r.vela_min} min`:`canal de ${r.canal_h} h`);
+  return synth+table("passat","2020–2023")+table("recent","2023–2026")
+    +`<p class="note">Amb menys posicions alhora el bot fa servir menys capital, i per això el resultat en euros tendeix a baixar. La columna que compara de manera justa és "Guany / caiguda": guany total dividit per la pitjor caiguda. Si un límit la millora en tots dos períodes, protegeix sense perdre eficàcia.</p>`;
+}
+function scanBlock(res){
+  const scale=res.mode==="escalat", tpm=res.mode==="objectius", mic=res.mode==="micro";
+  const synth=res.dades_sintetiques?`<p class="warn">Aquesta prova s'ha fet amb dades inventades (mode de proves): no la facis servir per decidir.</p>`:"";
+  const ok=res.resum.filter(r=>r.supera_tots).map(r=>mic?`${r.vela_min} min, objectiu ${fmtNum(r.objectiu_pct,1)} %, stop ${fmtNum(r.stop_pct,1)} %`:tpm?(r.objectiu_pct==null?"sense objectiu":`objectiu del ${fmtNum(r.objectiu_pct,1)} %`):scale?`espelmes de ${r.vela_min} min`:`canal de ${r.canal_h} h`);
   const head=`<div class="winner" style="border-color:${ok.length?"var(--gain)":"var(--amber)"}">
-    <div class="sub" style="margin:0">${tpm?"Regles del bot · amb objectiu de guany fix":scale?"Regles del bot · tots els paràmetres escalats":"Regles del bot · només canvia la durada del canal"}</div>
-    <h3>${ok.length?`${(ok.length>2?`${ok.length} de ${res.resum.length} ${tpm?"opcions":scale?"mides d'espelma":"durades"}`:ok.join(" i ")).replace(/^./,c=>c.toUpperCase())}: ${ok.length>1?"guanyen i superen":"guanya i supera"} l'atzar en tots dos períodes`:`Cap ${tpm?"objectiu":scale?"mida d'espelma":"durada"} guanya i supera l'atzar en tots dos períodes`}</h3>
+    <div class="sub" style="margin:0">${mic?"Micro-guanys amb ordres limitades":tpm?"Regles del bot · amb objectiu de guany fix":scale?"Regles del bot · tots els paràmetres escalats":"Regles del bot · només canvia la durada del canal"}</div>
+    <h3>${ok.length?`${(ok.length>2?`${ok.length} de ${res.resum.length} ${mic?"combinacions":tpm?"opcions":scale?"mides d'espelma":"durades"}`:ok.join(" i ")).replace(/^./,c=>c.toUpperCase())}: ${ok.length>1?"guanyen i superen":"guanya i supera"} l'atzar en tots dos períodes`:`Cap ${mic?"combinació":tpm?"objectiu":scale?"mida d'espelma":"durada"} guanya i supera l'atzar en tots dos períodes`}</h3>
     <div class="sub" style="margin:0">Per superar-ho cal guanyar diners, fer almenys 100 operacions i quedar per sobre del 95 % de les simulacions amb entrades a l'atzar, tant el 2020–2023 com el 2023–2026.</div></div>`;
   const table=(key,title)=>{ const P=res.periodes[key]; if(!P) return "";
     return `<h3 class="lab-h3">${title} · ${dmy(P.des_de)} – ${dmy(P.fins)} <span class="sub" style="font-weight:400">(Bitcoin ${fmtP(P.btc_pct)})</span></h3>
-    <div class="scroll"><table class="cmp wide"><thead><tr><th>${tpm?"Objectiu de guany":scale?"Espelma · canal / sortida / ATR":"Canal (entrada / sortida)"}</th><th>Operacions/dia</th>${tpm?"<th>Guanyadores</th>":""}<th>Resultat</th><th>Pitjor caiguda</th><th>Per operació abans de costos</th><th>Després de costos</th><th>Costos a l'any</th><th>Millor que l'atzar</th></tr></thead><tbody>
-    ${P.files.map(r=>`<tr${r.bot?' style="background:var(--sunk)"':""}><td>${tpm?`<b>${r.objectiu_pct==null?"Sense objectiu":"+"+fmtNum(r.objectiu_pct,1)+" %"}</b>`:scale?`<b>${r.vela_min} min</b><span class="pm">canal ${fmtNum(r.canal_h,0)} h / sortida ${fmtNum(r.sortida_h,0)} h / ATR ${fmtNum(r.atr_h,0)} h</span>`:`<b>${r.canal_h} h</b> / ${r.sortida_h} h`}${r.bot?' <span class="applied">el bot</span>':""}${r.supera?' <span class="applied">supera</span>':""}</td>
-      <td>${fmtNum(r.operacions_dia,1)}</td>${tpm?`<td>${r.guanyadores_pct==null?"—":fmtNum(r.guanyadores_pct,0)+" %"}<span class="pm">guanyadora ${r.net_guanyadora_pct==null?"—":pct(r.net_guanyadora_pct,2)} · perdedora ${r.net_perdedora_pct==null?"—":pct(r.net_perdedora_pct,2)}</span></td>`:""}<td class="${sign(r.rendiment_pct)}"><b>${fmtP(r.rendiment_pct)}</b><span class="pm">${fmtP(r.anual_pct)} anual</span></td>
+    <div class="scroll"><table class="cmp wide"><thead><tr><th>${mic?"Espelma · objectiu · stop":tpm?"Objectiu de guany":scale?"Espelma · canal / sortida / ATR":"Canal (entrada / sortida)"}</th><th>Operacions/dia</th>${tpm||mic?"<th>Guanyadores</th>":""}<th>Resultat</th><th>Pitjor caiguda</th><th>Per operació abans de costos</th><th>Després de costos</th><th>Costos a l'any</th><th>Millor que l'atzar</th></tr></thead><tbody>
+    ${P.files.map(r=>`<tr${r.bot?' style="background:var(--sunk)"':""}><td>${mic?`<b>${r.vela_min} min</b><span class="pm">objectiu ${fmtNum(r.objectiu_pct,1)} % · stop ${fmtNum(r.stop_pct,1)} %</span>`:tpm?`<b>${r.objectiu_pct==null?"Sense objectiu":"+"+fmtNum(r.objectiu_pct,1)+" %"}</b>`:scale?`<b>${r.vela_min} min</b><span class="pm">canal ${fmtNum(r.canal_h,0)} h / sortida ${fmtNum(r.sortida_h,0)} h / ATR ${fmtNum(r.atr_h,0)} h</span>`:`<b>${r.canal_h} h</b> / ${r.sortida_h} h`}${r.bot?' <span class="applied">el bot</span>':""}${r.supera?' <span class="applied">supera</span>':""}</td>
+      <td>${fmtNum(r.operacions_dia,1)}</td>${tpm||mic?`<td>${r.guanyadores_pct==null?"—":fmtNum(r.guanyadores_pct,0)+" %"}<span class="pm">guanyadora ${r.net_guanyadora_pct==null?"—":pct(r.net_guanyadora_pct,2)} · perdedora ${r.net_perdedora_pct==null?"—":pct(r.net_perdedora_pct,2)}</span></td>`:""}<td class="${sign(r.rendiment_pct)}"><b>${fmtP(r.rendiment_pct)}</b><span class="pm">${fmtP(r.anual_pct)} anual</span>${mic?`<span class="pm">amb ordres a mercat: ${fmtP(r.rendiment_taker_pct)}</span>`:""}</td>
       <td>${fmtNum(r.caiguda_pct,1)} %${r.fre?`<span class="pm">el fre del ${res.caiguda_maxima_acceptada_pct} % hauria saltat el ${dmy(r.fre)}</span>`:""}</td>
       <td class="${sign(r.brut_mitja_pct)}">${r.brut_mitja_pct==null?"—":pct(r.brut_mitja_pct,2)}</td><td class="${sign(r.net_mitja_pct)}">${r.net_mitja_pct==null?"—":pct(r.net_mitja_pct,2)}</td>
-      <td>${fmtNum(r.costos_anuals_pct_capital,1)} % del capital</td><td>${fmtNum(r.mico_percentil,0)} %<span class="pm">atzar: mediana ${fmtP(r.mico_mediana_pct)}</span></td></tr>`).join("")}
+      <td>${fmtNum(r.costos_anuals_pct_capital,1)} % del capital</td><td>${r.mico_percentil==null?"—":fmtNum(r.mico_percentil,0)+" %"}<span class="pm">atzar: mediana ${fmtP(r.mico_mediana_pct)}</span></td></tr>`).join("")}
     </tbody></table></div>`; };
   return synth+head+table("passat","2020–2023")+table("recent","2023–2026")
     +`<p class="note">"Resultat": guany total del període amb el 60 % del capital, sense aturar-se pel fre (la columna de caiguda diu si hauria saltat). "Per operació": guany mitjà de cada operació sobre els diners de la posició; els costos (0,14 % per operació més el finançament dels llargs) són la diferència entre les dues columnes. "Millor que l'atzar": per sobre de quin percentatge de les 25 simulacions amb entrades a l'atzar queda; cal el 95 %.</p>`;
@@ -701,18 +718,22 @@ function scanBlock(res){
 function renderLab(){
   const body=$("lab-body"); if(!lab) return;
   const st=lab.estat||{}, ok=r=>r&&r.versio>=4?r:null;
-  const res=ok(lab.resultats), past=ok(lab.resultats_passat), fast=ok(lab.resultats_rapid), scan=lab.resultats_terme_mig?.versio===6?lab.resultats_terme_mig:null, scl=lab.resultats_escalat?.versio===7?lab.resultats_escalat:null, tpr=lab.resultats_objectius?.versio===8?lab.resultats_objectius:null;
+  const res=ok(lab.resultats), past=ok(lab.resultats_passat), fast=ok(lab.resultats_rapid), scan=lab.resultats_terme_mig?.versio===6?lab.resultats_terme_mig:null, scl=lab.resultats_escalat?.versio===7?lab.resultats_escalat:null, tpr=lab.resultats_objectius?.versio===8?lab.resultats_objectius:null, mic=lab.resultats_micro?.versio===9?lab.resultats_micro:null, cor=lab.resultats_correlacio?.versio===10?lab.resultats_correlacio:null;
   const running=st.estat==="descarregant"||st.estat==="provant", runMode=running?(st.mode||"actual"):null;
   clearTimeout(labTimer); if(running) labTimer=setTimeout(loadLab,5000);
-  const last=[res,past,fast,scan,scl,tpr].filter(Boolean).map(r=>r.generat).sort().pop();
+  const last=[res,past,fast,scan,scl,tpr,mic,cor].filter(Boolean).map(r=>r.generat).sort().pop();
   $("lab-when").textContent = last && !running ? `Última prova ${ago(last)}` : "";
   const prog=`<p>${esc(st.missatge||"Treballant…")}</p><div class="bar"><i style="width:${st.pct||0}%"></i></div>
       <p>${fmtNum(st.pct||0,0)} % fet. Pots tancar el panell: la prova continua i els resultats apareixeran aquí.</p>`;
   const errMsg=(st.estat==="error"||st.estat==="interrompuda")?`<p class="warn">${esc(st.missatge)}</p>`:"";
   const fb=fast?labBlock(fast,"rapid"):null, pb=past?labBlock(past,"passat"):null, mb=res?labBlock(res,"actual"):null;
-  const lim=(tpr||scl||scan||fast||past||res||{}).caiguda_maxima_acceptada_pct;
+  const lim=(mic||cor||tpr||scl||scan||fast||past||res||{}).caiguda_maxima_acceptada_pct;
   const fold=(title,html)=>`<details><summary>${title}</summary>${html}</details>`;
-  const tpSec=`<h3 class="lab-h3" style="margin-top:6px">Objectius de guany: tancar abans les operacions</h3>`
+  const micSec=`<h3 class="lab-h3" style="margin-top:6px">Micro-guanys amb ordres limitades</h3>`
+    +(runMode==="micro"?prog:(mic?scanBlock(mic)+fold("Com es fa aquesta prova",microIntro):microIntro));
+  const corSec=`<h3 class="lab-h3" style="margin-top:22px">Límit de posicions en la mateixa direcció</h3>`
+    +(runMode==="correlacio"?prog:(cor?corrBlock(cor)+fold("Com es fa aquesta prova",corrIntro):corrIntro));
+  const tpSec=`<h3 class="lab-h3" style="margin-top:22px">Objectius de guany: tancar abans les operacions</h3>`
     +(runMode==="objectius"?prog:(tpr?scanBlock(tpr)+fold("Com es fa aquesta prova",tpIntro):tpIntro));
   const sclSec=`<h3 class="lab-h3" style="margin-top:22px">Escalat proporcional: el bot amb espelmes més curtes i més llargues</h3>`
     +(runMode==="escalat"?prog:(scl?fold("Veure els resultats de l'escalat",scanBlock(scl)+scaleIntro):scaleIntro));
@@ -726,8 +747,8 @@ function renderLab(){
     +(runMode==="actual"?prog:(res?fold(`Veure els resultats del laboratori principal${res.guanyadora?"":" · cap estratègia supera el criteri"}`,mb.html):labIntro));
   const btn=(mode,has,label,cls)=>`<button class="btn ${cls} lab-go" ${running?"disabled":""} onclick="startLab('${mode}')">${has?"Torna a fer ":"Fes "}${label}</button>`;
   const ctrl=`<div class="controls" style="margin-top:14px">${labSelect(lim)}
-      ${btn("objectius",tpr,"la prova d'objectius","")}${btn("escalat",scl,"l'escalat","ghost")}${btn("terme_mig",scan,"el terme mig","ghost")}${btn("rapid",fast,"la prova ràpida","ghost")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
-  body.innerHTML=errMsg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+tpSec+sclSec+scanSec+fastSec+pastSec+mainSec+ctrl;
+      ${btn("objectius",tpr,"la prova d'objectius","")}${btn("micro",mic,"la prova de micro-guanys","")}${btn("correlacio",cor,"la prova del límit de posicions","")}${btn("escalat",scl,"l'escalat","ghost")}${btn("terme_mig",scan,"el terme mig","ghost")}${btn("rapid",fast,"la prova ràpida","ghost")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
+  body.innerHTML=errMsg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+tpSec+micSec+corSec+sclSec+scanSec+fastSec+pastSec+mainSec+ctrl;
   const draw=()=>{ if(fb&&runMode!=="rapid") fb.draw(); if(pb&&runMode!=="passat") pb.draw(); if(mb&&runMode!=="actual") mb.draw(); };
   draw();
   body.querySelectorAll("details").forEach(d=>d.addEventListener("toggle",draw));

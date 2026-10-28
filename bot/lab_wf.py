@@ -123,6 +123,8 @@ ALL_FAMILIES = {**FAMILIES, **FAST_FAMILIES, **SCAN_FAMILY}
 # aquest percentatge (abans de costos). Sense optimitzar; mateixos dos períodes i mateixa prova de l'atzar.
 TP_LEVELS = [0.0, 0.005, 0.01, 0.02, 0.03, 0.05, 0.10]
 RESULTS_TP_FILE = os.path.join(LAB_DIR, "resultats_objectius.json")
+RESULTS_MICRO_FILE = os.path.join(LAB_DIR, "resultats_micro.json")
+RESULTS_CORR_FILE = os.path.join(LAB_DIR, "resultats_correlacio.json")
 SCALE_CANDLES_MIN = [240, 120, 90, 60, 45, 30, 20, 15, 10, 5]   # 90-240 min afegits el 20-10-2026 (direcció contrària: menys operacions)
 SCALE_PERIODS = {"passat": (PAST_START, PAST_END), "recent": ("2023-10-01", None)}
 RESULTS_SCALE_FILE = os.path.join(LAB_DIR, "resultats_escalat.json")
@@ -904,13 +906,19 @@ def load(synthetic_data: bool = False) -> dict:
 
 
 def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = False, fast: bool = False,
-         scan: bool = False, scale: bool = False, tp: bool = False) -> dict:
+         scan: bool = False, scale: bool = False, tp: bool = False, micro: bool = False, corr: bool = False) -> dict:
     t0 = time.time()
-    mode = "objectius" if tp else "escalat" if scale else "terme_mig" if scan else "rapid" if fast else "passat" if past else "actual"
+    mode = "micro" if micro else "correlacio" if corr else "objectius" if tp else "escalat" if scale else "terme_mig" if scan else "rapid" if fast else "passat" if past else "actual"
     write_status(estat="descarregant", mode=mode, pct=0, missatge="Preparant les dades")
     try:
         prog = lambda pct, msg: write_status(estat="provant", mode=mode, pct=pct, missatge=msg)   # noqa: E731
-        if tp:
+        if micro or corr:
+            from . import lab_micro
+            if micro:
+                res = lab_micro.run_micro_lab(dd_limit_pct / 100, synthetic, prog)
+            else:
+                res = lab_micro.run_corr_lab({"passat": load_past(synthetic), "recent": load(synthetic)}, dd_limit_pct / 100, prog)
+        elif tp:
             res = run_tp({"passat": load_past(synthetic), "recent": load(synthetic)}, dd_limit_pct / 100, prog)
         elif scale:
             res = run_scale(dd_limit_pct / 100, synthetic, prog)
@@ -925,7 +933,7 @@ def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = F
         res["mode"] = mode
         res["durada_min"] = round((time.time() - t0) / 60, 1)
         res["dades_sintetiques"] = synthetic
-        out = RESULTS_TP_FILE if tp else RESULTS_SCALE_FILE if scale else RESULTS_SCAN_FILE if scan else RESULTS_FAST_FILE if fast else RESULTS_PAST_FILE if past else RESULTS_FILE
+        out = RESULTS_MICRO_FILE if micro else RESULTS_CORR_FILE if corr else RESULTS_TP_FILE if tp else RESULTS_SCALE_FILE if scale else RESULTS_SCAN_FILE if scan else RESULTS_FAST_FILE if fast else RESULTS_PAST_FILE if past else RESULTS_FILE
         tmp = out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(res, f, default=str)
