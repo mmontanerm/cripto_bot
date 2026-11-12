@@ -20,7 +20,20 @@ REQUIRED = {
     "risc": ["exposicio_pct", "caiguda_maxima_pct"],
 }
 # Valors que es poden canviar des del panell, amb els seus límits
-PANEL_LIMITS = {"exposicio_pct": (10, 100), "caiguda_maxima_pct": (5, 50)}
+PANEL_LIMITS = {"exposicio_pct": (10, 100), "caiguda_maxima_pct": (5, 50), "max_mateixa_direccio": (1, 6)}
+
+# Maneres d'assegurar els guanys (les mateixes que prova el laboratori). ATR = moviment mitjà per hora (24 h).
+#   be: quan guanya be × ATR, el stop puja al preu d'entrada
+#   trail: stop seguidor a trail × ATR del millor preu des de l'entrada
+#   fast_atr / fast_n: quan guanya fast_atr × ATR, la sortida passa a un canal de fast_n hores
+EXIT_MODES = {
+    "actual": ("Com ara: stop fix a 4 ATR i sortida pel canal de 84 h", {}),
+    "proteccio": ("Quan guanya 2 ATR, el stop puja al preu d'entrada", {"be": 2.0}),
+    "seguidor3": ("Stop seguidor a 3 ATR del millor preu", {"trail": 3.0}),
+    "seguidor2": ("Stop seguidor a 2 ATR del millor preu (més ajustat)", {"trail": 2.0}),
+    "rapida": ("Quan guanya 3 ATR, sortida pel canal de 24 h (en lloc de 84 h)", {"fast_atr": 3.0, "fast_n": 24}),
+    "combinada": ("Protecció a l'entrada (2 ATR) + canal de 24 h quan guanya 3 ATR", {"be": 2.0, "fast_atr": 3.0, "fast_n": 24}),
+}
 
 
 def validate(cfg: dict) -> None:
@@ -40,8 +53,10 @@ def validate(cfg: dict) -> None:
     if not 0.5 <= e["stop_atr"] <= 10:
         raise ValueError("stop_atr ha d'estar entre 0,5 i 10")
     for k, (lo, hi) in PANEL_LIMITS.items():
-        if not lo <= float(r[k]) <= hi:
+        if k in r and not lo <= float(r[k]) <= hi:
             raise ValueError(f"risc.{k} ha d'estar entre {lo} i {hi}")
+    if e.get("sortida", "actual") not in EXIT_MODES:
+        raise ValueError(f"estrategia.sortida ha de ser una d'aquestes: {', '.join(EXIT_MODES)}")
 
 
 def deep_merge(base: dict, extra: dict) -> dict:

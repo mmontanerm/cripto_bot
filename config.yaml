@@ -33,8 +33,10 @@ estrategia:
   canal_sortida_h: 84       # surt d'un llarg si tanca per sota del mínim de les últimes 84 h; d'un curt, per sobre del màxim
   stop_atr: 4.0             # stop de pèrdues a 4 × ATR del preu d'entrada
   atr_h: 24                 # ATR (moviment mitjà per hora) calculat amb 24 hores
+  sortida: actual           # com assegura els guanys: actual, proteccio, seguidor3, seguidor2, rapida, combinada (es pot canviar al panell)
 
 # ---------- Risc (es pot canviar des del panell) ----------
 risc:
   exposicio_pct: 60         # part del capital que fa servir, repartida a parts iguals entre els 6 valors
   caiguda_maxima_pct: 15    # si el capital cau això des del màxim, ho tanca tot i s'atura
+  max_mateixa_direccio: 6   # màxim de posicions obertes alhora en la mateixa direcció (6 = sense límit)

@@ -9,6 +9,10 @@ Les mateixes regles que al laboratori:
   - Una posició com a màxim per valor. Mida fixa: (capital × exposició) / nombre de valors.
   - Costos de futurs amb ordres a mercat: comissió + lliscament a cada costat; els llargs paguen finançament.
   - Fre d'emergència: si el capital cau més de la caiguda màxima des del seu màxim, ho tanca tot i s'atura.
+  - Gestió de la sortida (estrategia.sortida, es tria al panell): protecció a preu d'entrada, stop seguidor o
+    canal de sortida més curt quan l'operació ja guanya. Exactament les mateixes regles que la prova de sortides
+    del laboratori: el millor preu i el stop s'actualitzen a cada tancament d'hora; el stop es vigila cada minut.
+  - Límit de posicions en la mateixa direcció (risc.max_mateixa_direccio, es tria al panell).
 
 El panell pot donar ordres (pausa, reprèn, tancar-ho tot, rearmar, reiniciar el compte) a través de
 state/ordres.json, i canviar l'exposició i el fre a través de state/ajustos.yaml.
@@ -26,7 +30,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from .config import ConfigWatcher
+from .config import EXIT_MODES, ConfigWatcher
 from .data import KrakenFeed
 from .paths import COMMANDS, EQUITY, STATE, STATE_DIR, STATUS, TRADES
 
@@ -53,6 +57,7 @@ def save_json(path: str, obj) -> None:
 def indicators(df: pd.DataFrame, e: dict) -> dict:
     """Nivells de l'última espelma TANCADA (igual que al laboratori)."""
     n_in, n_out = int(e["canal_entrada_h"]), int(e["canal_sortida_h"])
+    n_fast = int(EXIT_MODES.get(e.get("sortida", "actual"), ("", {}))[1].get("fast_n", 0)) or n_out
     h, lo, c = df["high"], df["low"], df["close"]
     prev = c.shift()
     tr = pd.concat([h - lo, (h - prev).abs(), (lo - prev).abs()], axis=1).max(axis=1)
@@ -63,6 +68,8 @@ def indicators(df: pd.DataFrame, e: dict) -> dict:
         "min_entrada": float(lo.rolling(n_in).min().shift(1).iloc[-1]),
         "max_sortida": float(h.rolling(n_out).max().shift(1).iloc[-1]),
         "min_sortida": float(lo.rolling(n_out).min().shift(1).iloc[-1]),
+        "max_rapida": float(h.rolling(n_fast).max().shift(1).iloc[-1]),
+        "min_rapida": float(lo.rolling(n_fast).min().shift(1).iloc[-1]),
         "atr": float(atr.iloc[-1]),
     }
 
@@ -79,6 +86,7 @@ class Position:
     fee_in: float = 0.0
     funding: float = 0.0   # finançament pagat (llargs)
     bars: int = 0
+    best: float = 0.0      # millor preu des de l'entrada (màxim en un llarg, mínim en un curt)
 
     @property
     def collateral(self) -> float:
@@ -134,6 +142,7 @@ class Engine:
         self.running = True
         self.started = str(now_utc())
         self.market: dict = {}
+        self.blocked: dict = {}
         self.unavailable: dict = {}
         self._last_equity_log = 0.0
         self._n_trades = -1
@@ -170,6 +179,13 @@ class Engine:
     # ------------------------------------------------------------------ obrir / tancar
     def _open(self, s: str, side: int, price: float, atr: float, ts) -> None:
         a, r, e = self.acc, self.cfg["risc"], self.cfg["estrategia"]
+        limit = int(r.get("max_mateixa_direccio", 6))
+        same = sum(1 for p in a.positions.values() if p.side == side)
+        if same >= limit:
+            log.info("No obre %s %s: ja hi ha %d posicions %s (límit %d)", "LLARG" if side == 1 else "CURT", s, same,
+                     "llargues" if side == 1 else "curtes", limit)
+            self.blocked[s] = side
+            return
         fill = price * (1 + self.slip * side)
         notional = a.equity() * r["exposicio_pct"] / 100 / len(self.cfg["symbols"])
         notional = min(notional, a.cash / (1 + self.fee) * 0.999)
@@ -180,7 +196,7 @@ class Engine:
         a.cash -= notional + fee
         a.fees += fee
         pos = Position(symbol=s, side=side, qty=notional / fill, entry=fill, entry_ts=str(ts), atr=atr,
-                       stop=fill - side * float(e["stop_atr"]) * atr, fee_in=fee)
+                       stop=fill - side * float(e["stop_atr"]) * atr, fee_in=fee, best=fill)
         a.positions[s] = pos
         log.info("OBRE %s %s · %.2f EUR a %s · stop %s", "LLARG" if side == 1 else "CURT", s, notional,
                  f"{fill:.6g}", f"{pos.stop:.6g}")
@@ -204,6 +220,28 @@ class Engine:
         })
         log.info("TANCA %s %s a %s · %s · %+.2f EUR (%+.2f %%)", "LLARG" if pos.side == 1 else "CURT", s,
                  f"{fill:.6g}", REASON.get(reason, reason), pnl, pnl / pos.collateral * 100)
+
+    @staticmethod
+    def _update_best(pos: Position, df: pd.DataFrame) -> None:
+        """Millor preu des de l'entrada, amb les espelmes tancades (inclou les anteriors si la posició ja era oberta)."""
+        since = df[df.index >= pd.Timestamp(pos.entry_ts).floor("h")]
+        if not pos.best:
+            pos.best = pos.entry
+        if len(since):
+            pos.best = max(pos.best, float(since["high"].max())) if pos.side == 1 else min(pos.best, float(since["low"].min()))
+
+    @staticmethod
+    def _manage_stop(pos: Position, mg: dict, gain_atr: float) -> None:
+        """Mou el stop a favor (mai en contra) segons la gestió de sortida triada."""
+        new = pos.stop
+        if mg.get("trail"):
+            t = pos.best - pos.side * mg["trail"] * pos.atr
+            new = max(new, t) if pos.side == 1 else min(new, t)
+        if mg.get("be") and gain_atr >= mg["be"]:
+            new = max(new, pos.entry) if pos.side == 1 else min(new, pos.entry)
+        if new != pos.stop:
+            log.info("STOP %s mogut a favor: %s → %s", pos.symbol, f"{pos.stop:.6g}", f"{new:.6g}")
+            pos.stop = new
 
     def close_all(self, ts, reason: str) -> None:
         for s in list(self.acc.positions):
@@ -252,6 +290,7 @@ class Engine:
         a, e = self.acc, self.cfg["estrategia"]
         ts = now_utc()
         symbols = list(dict.fromkeys(self.cfg["symbols"] + list(a.positions)))
+        pending: list = []
         for s in symbols:
             if time.time() - self.unavailable.get(s, 0) < 3600:
                 continue
@@ -299,14 +338,25 @@ class Engine:
                         pos.funding += f
                         a.cash -= f
                         a.funding += f
+                    mg = EXIT_MODES.get(e.get("sortida", "actual"), ("", {}))[1]
+                    self._update_best(pos, df)
+                    gain_atr = pos.side * (pos.best - pos.entry) / pos.atr if pos.atr > 0 else 0.0
                     out = (ind["close"] < ind["min_sortida"]) if pos.side == 1 else (ind["close"] > ind["max_sortida"])
+                    if mg.get("fast_atr") and gain_atr >= mg["fast_atr"]:   # ja guanya prou: canal de sortida curt
+                        out = out or ((ind["close"] < ind["min_rapida"]) if pos.side == 1 else (ind["close"] > ind["max_rapida"]))
                     if out:
                         self._close(s, price, ts, "sortida_canal")   # a l'obertura de l'espelma següent ≈ preu actual
+                    else:
+                        self._manage_stop(pos, mg, gain_atr)
                 elif fresh and not a.paused and not a.halted:
+                    # les entrades es fan quan s'han revisat tots els valors (primer les sortides, com al laboratori)
                     if ind["close"] > ind["max_entrada"]:
-                        self._open(s, 1, price, ind["atr"], ts)
+                        pending.append((s, 1, price, ind["atr"], ind))
                     elif ind["close"] < ind["min_entrada"]:
-                        self._open(s, -1, price, ind["atr"], ts)
+                        pending.append((s, -1, price, ind["atr"], ind))
+            self.market[s] = self._explain(s, price, ind)
+        for s, side, price, atr, ind in pending:
+            self._open(s, side, price, atr, ts)
             self.market[s] = self._explain(s, price, ind)
 
         # Fre d'emergència
@@ -330,6 +380,10 @@ class Engine:
                 "dist_curt_pct": (dn / price - 1) * 100, "atr_pct": ind["atr"] / price * 100}
         if pos:
             lvl = ind["min_sortida"] if pos.side == 1 else ind["max_sortida"]
+            mg = EXIT_MODES.get(self.cfg["estrategia"].get("sortida", "actual"), ("", {}))[1]
+            gain_atr = pos.side * ((pos.best or pos.entry) - pos.entry) / pos.atr if pos.atr > 0 else 0.0
+            if mg.get("fast_atr") and gain_atr >= mg["fast_atr"]:
+                lvl = max(lvl, ind["min_rapida"]) if pos.side == 1 else min(lvl, ind["max_rapida"])
             info.update(estat="llarg" if pos.side == 1 else "curt", sortida=lvl, stop=pos.stop)
             info["text"] = (f"Posició {'llarga' if pos.side == 1 else 'curta'}. Surt si una hora tanca "
                             f"{'per sota' if pos.side == 1 else 'per sobre'} de {lvl:.6g} € o si toca el stop ({pos.stop:.6g} €).")
@@ -337,7 +391,10 @@ class Engine:
             info.update(estat="aturat", text="Fre d'emergència actiu: no obre posicions.")
         elif a.paused:
             info.update(estat="pausa", text="En pausa: no obre posicions noves.")
+        elif s in self.blocked and ((self.blocked[s] == 1 and ind["close"] > up) or (self.blocked[s] == -1 and ind["close"] < dn)):
+            info.update(estat="limit", text="Ha donat senyal, però ja hi ha el màxim de posicions en aquesta direcció.")
         else:
+            self.blocked.pop(s, None)
             near = min(abs(info["dist_llarg_pct"]), abs(info["dist_curt_pct"]))
             info["estat"] = "a_prop" if near < 1.0 else "esperant"
             info["text"] = (f"Entrarà en llarg si una hora tanca per sobre de {up:.6g} € ({info['dist_llarg_pct']:+.1f} %) "
@@ -386,12 +443,14 @@ class Engine:
             "btc_rendiment_pct": round((btc / a.btc_start - 1) * 100, 2) if btc and a.btc_start else None,
             "maxim_eur": round(a.peak, 2), "caiguda_pct": round((1 - eq / a.peak) * 100, 2) if a.peak else 0,
             "comissions_eur": round(a.fees, 2), "financament_eur": round(a.funding, 2),
+            "sortida_text": EXIT_MODES.get(self.cfg["estrategia"].get("sortida", "actual"), ("", {}))[0],
             "config": {"estrategia": self.cfg["estrategia"], "risc": self.cfg["risc"], "costos": self.cfg["paper"],
                        "valors": self.cfg["symbols"], "ajustos_panell": self.watcher.override},
             "valors": self.market,
             "posicions": {s: {"costat": "llarg" if p.side == 1 else "curt", "entrada": p.entry, "obert": p.entry_ts,
                               "preu": a.last_price.get(s), "eur": round(p.collateral, 2), "stop": p.stop,
                               "sortida": self.market.get(s, {}).get("sortida"), "hores": p.bars,
+                              "millor_pct": round(p.side * ((p.best or p.entry) - p.entry) / p.entry * 100, 2),
                               "pnl_eur": round(p.pnl(a.last_price.get(s, p.entry)), 2),
                               "pnl_pct": round(p.pnl(a.last_price.get(s, p.entry)) / p.collateral * 100, 2)}
                           for s, p in a.positions.items()},

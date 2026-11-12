@@ -41,7 +41,7 @@ Fitxers que genera (a `state/`): `estat_bot.json` (el que mostra el panell), `co
 
 ## Ajustar paràmetres
 
-- **Des del panell** (secció *Control*): la part del capital que fa servir i el fre d'emergència. També s'hi pot posar en pausa, reprendre, tancar-ho tot, rearmar després d'una aturada i reiniciar el compte simulat.
+- **Des del panell** (secció *Control*): la part del capital que fa servir, el fre d'emergència, el màxim de posicions en la mateixa direcció i com assegura els guanys (stop seguidor, protecció a preu d'entrada...). També s'hi pot posar en pausa, reprendre, tancar-ho tot, rearmar després d'una aturada i reiniciar el compte simulat.
 - **A `config.yaml`** (a GitHub): la resta. Es recarrega sol; si hi ha un error de format, el bot ho avisa al log i continua amb l'anterior. Els paràmetres de l'estratègia estan fixats a propòsit: canviar-los després de veure resultats és la manera més ràpida d'enganyar-se.
 
 ## Tenir-lo encès 24/7 amb Render + GitHub (tot des de l'iPad)
@@ -99,6 +99,8 @@ Al panell hi ha un sol laboratori: busca paràmetres per guanyar **amb les pujad
 1. guanyar als períodes no vistos, amb almenys 100 operacions;
 2. superar el 95% de les simulacions amb entrades a l'atzar;
 3. guanyar a la reserva final sense passar de la caiguda acceptada ni fer saltar l'aturada.
+
+**Sortides (com assegurar millor els guanys):** les regles del bot amb sis maneres de sortir: com ara; protecció a preu d'entrada quan guanya 2 ATR; stop seguidor a 3 o a 2 ATR del millor preu; canal de sortida de 24 h quan guanya 3 ATR; i protecció + canal curt. Mostra també el millor moment mitjà de les operacions i quantes de les que arriben a +5 % acaben perdent. Les mateixes opcions es poden activar al bot des del panell (Control → "Com assegura els guanys"); el bot en directe fa exactament les mateixes operacions que el laboratori. `python run_lab.py --sortides`.
 
 **Micro-guanys amb ordres limitades:** ordres limitades a les bandes de Bollinger (20 espelmes, 2 desviacions) amb objectiu petit (0,3 %, 0,5 % o 1 %) i stop ajustat (0,5 %, 1 % o 2 %), espelmes de 15 min i 1 h. Ordres limitades al 0,02 % (creador de mercat), stops a mercat al 0,07 %. Una ordre limitada només s'executa si el preu la travessa. També mostra el resultat pagant ordres a mercat. `python run_lab.py --micro`.
 

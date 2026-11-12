@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import yaml
 
-from .config import PANEL_LIMITS
+from .config import EXIT_MODES, PANEL_LIMITS
 from .lab_wf import DAYS as LAB_DAYS, PAST_END, PAST_START
 from .paths import COMMANDS, EQUITY, LAB_DIR, LOG_DIR, OLD_FILES, OVERRIDE, STATE_DIR, STATUS, TRADES
 
@@ -38,8 +38,9 @@ LAB_RESULTS_SCALE = os.path.join(LAB_DIR, "resultats_escalat.json")
 LAB_RESULTS_TP = os.path.join(LAB_DIR, "resultats_objectius.json")
 LAB_RESULTS_MICRO = os.path.join(LAB_DIR, "resultats_micro.json")
 LAB_RESULTS_CORR = os.path.join(LAB_DIR, "resultats_correlacio.json")
+LAB_RESULTS_EXITS = os.path.join(LAB_DIR, "resultats_sortides.json")
 LAB_MODES = {"actual": [], "passat": ["--passat"], "rapid": ["--rapid"], "terme_mig": ["--terme-mig"], "escalat": ["--escalat"], "objectius": ["--objectius"],
-             "micro": ["--micro"], "correlacio": ["--correlacio"]}
+             "micro": ["--micro"], "correlacio": ["--correlacio"], "sortides": ["--sortides"]}
 # Fitxers dels laboratoris retirats: s'esborren en arrencar perquè no quedi cap resultat antic
 OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json",
                  "estat_graella.json", "resultats_graella.json"]
@@ -92,6 +93,7 @@ def collect() -> dict:
         "trades_total": len(trades),
         "equity": _downsample(equity),
         "log": _tail(os.path.join(LOG_DIR, "bot.log")),
+        "sortides": {k: v[0] for k, v in EXIT_MODES.items()},
     }
 
 
@@ -121,8 +123,9 @@ def send_command(action: str) -> tuple[int, str]:
 
 
 def save_settings(body: dict) -> tuple[int, str]:
-    """Canvia l'exposició i/o el fre d'emergència (state/ajustos.yaml, té prioritat sobre config.yaml)."""
-    risc = {}
+    """Canvia l'exposició, el fre, el límit de posicions i la gestió de la sortida
+    (state/ajustos.yaml, té prioritat sobre config.yaml)."""
+    risc, estr = {}, {}
     for k, (lo, hi) in PANEL_LIMITS.items():
         if k in body:
             try:
@@ -131,8 +134,12 @@ def save_settings(body: dict) -> tuple[int, str]:
                 return 400, "Valor no vàlid."
             if not lo <= v <= hi:
                 return 400, f"Ha d'estar entre {lo} i {hi}."
-            risc[k] = v
-    if not risc:
+            risc[k] = int(v) if k == "max_mateixa_direccio" else v
+    if "sortida" in body:
+        if body["sortida"] not in EXIT_MODES:
+            return 400, "Gestió de sortida desconeguda."
+        estr["sortida"] = body["sortida"]
+    if not risc and not estr:
         return 400, "No hi ha res a canviar."
     current = {}
     if os.path.exists(OVERRIDE):
@@ -141,13 +148,16 @@ def save_settings(body: dict) -> tuple[int, str]:
                 current = yaml.safe_load(f) or {}
         except Exception:
             current = {}
-    current.setdefault("risc", {}).update(risc)
+    if risc:
+        current.setdefault("risc", {}).update(risc)
+    if estr:
+        current.setdefault("estrategia", {}).update(estr)
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = OVERRIDE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         yaml.safe_dump(current, f, allow_unicode=True)
     os.replace(tmp, OVERRIDE)
-    log.info("Ajustos del panell: %s", risc)
+    log.info("Ajustos del panell: %s", {**risc, **estr})
     return 202, "Ajust desat. El bot l'aplica en menys d'un minut."
 
 
@@ -177,7 +187,8 @@ def lab_state() -> dict:
             "resultats_escalat": _read_json(LAB_RESULTS_SCALE) or None,
             "resultats_objectius": _read_json(LAB_RESULTS_TP) or None,
             "resultats_micro": _read_json(LAB_RESULTS_MICRO) or None,
-            "resultats_correlacio": _read_json(LAB_RESULTS_CORR) or None}
+            "resultats_correlacio": _read_json(LAB_RESULTS_CORR) or None,
+            "resultats_sortides": _read_json(LAB_RESULTS_EXITS) or None}
 
 
 def lab_start(dd: float, mode: str = "actual") -> tuple[int, str]:

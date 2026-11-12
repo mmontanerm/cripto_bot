@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
+from .config import EXIT_MODES
 from .data import fetch_history, fetch_range
 from .paths import LAB_DIR
 
@@ -124,6 +125,11 @@ ALL_FAMILIES = {**FAMILIES, **FAST_FAMILIES, **SCAN_FAMILY}
 TP_LEVELS = [0.0, 0.005, 0.01, 0.02, 0.03, 0.05, 0.10]
 RESULTS_TP_FILE = os.path.join(LAB_DIR, "resultats_objectius.json")
 RESULTS_MICRO_FILE = os.path.join(LAB_DIR, "resultats_micro.json")
+RESULTS_EXITS_FILE = os.path.join(LAB_DIR, "resultats_sortides.json")
+# PROVA DE SORTIDES (demanada el 12-11-2026): les regles exactes del bot amb maneres diferents d'assegurar els guanys.
+# Fixades abans de veure'n cap resultat, sense optimitzar. ATR = moviment mitjà per hora de les últimes 24 h
+# (a BTC, 1 ATR és aproximadament un 0,5-0,8 % del preu). Les mateixes opcions es poden triar al panell del bot.
+EXIT_VARIANTS = [(k, txt, mg) for k, (txt, mg) in EXIT_MODES.items()]
 RESULTS_CORR_FILE = os.path.join(LAB_DIR, "resultats_correlacio.json")
 SCALE_CANDLES_MIN = [240, 120, 90, 60, 45, 30, 20, 15, 10, 5]   # 90-240 min afegits el 20-10-2026 (direcció contrària: menys operacions)
 SCALE_PERIODS = {"passat": (PAST_START, PAST_END), "recent": ("2023-10-01", None)}
@@ -179,7 +185,7 @@ class Sym:
 
 def trend_signals(s: Sym, N: int, frac: float):
     hi, lo = s.donchian(N)
-    ehi, elo = s.donchian(max(2, int(N * frac)))
+    ehi, elo = s.donchian(max(2, int(round(N * frac))))
     C = s.C
     with np.errstate(invalid="ignore"):
         entry = np.where(C > hi, 1, np.where(C < lo, -1, 0))
@@ -206,8 +212,45 @@ def _first(mask_fn, e: int, end: int):
     return None
 
 
+def _managed_exit(H, L, O, d, e, end, ep, sp, atr, ex_main, ex_fast, mg: dict):
+    """Sortida GESTIONADA (protecció a preu d'entrada, stop seguidor, canal ràpid quan guanya).
+    El stop de cada espelma es calcula amb el millor preu fins a l'espelma ANTERIOR (com faria el bot en directe,
+    que l'actualitza a cada tancament); la sortida pel canal ràpid es decideix al tancament amb el millor preu inclòs.
+    Retorna ("stop", espelma, nivell) o ("canal", espelma del senyal) o None."""
+    be, trail, fast_k = mg.get("be", 0.0), mg.get("trail", 0.0), mg.get("fast_atr", 0.0)
+    best = ep
+    a, step = e, 256
+    acc = np.maximum.accumulate if d > 0 else np.minimum.accumulate
+    while a < end:
+        b = min(end, a + step)
+        fav = H[a:b] if d > 0 else L[a:b]
+        incl = acc(np.r_[best, fav])[1:]                    # millor preu fins a cada espelma (inclosa)
+        prev = np.r_[best, incl[:-1]]                       # ... fins a l'espelma anterior
+        stop = np.full(b - a, sp)
+        if trail:
+            stop = np.maximum(stop, prev - trail * atr) if d > 0 else np.minimum(stop, prev + trail * atr)
+        if be:
+            on = (prev >= ep + be * atr) if d > 0 else (prev <= ep - be * atr)
+            stop = np.where(on, np.maximum(stop, ep) if d > 0 else np.minimum(stop, ep), stop)
+        hit = (L[a:b] <= stop) if d > 0 else (H[a:b] >= stop)
+        ex = ex_main[a:b].copy()
+        if fast_k and ex_fast is not None:
+            on2 = (incl >= ep + fast_k * atr) if d > 0 else (incl <= ep - fast_k * atr)
+            ex |= on2 & ex_fast[a:b]
+        ia = int(np.argmax(hit)) if hit.any() else None
+        ib = int(np.argmax(ex)) if ex.any() else None
+        if ia is not None and (ib is None or ia <= ib):
+            return ("stop", a + ia, float(stop[ia]))
+        if ib is not None:
+            return ("canal", a + ib)
+        best = incl[-1]
+        a, step = b, step * 2
+    return None
+
+
 # ------------------------------------------------------------------ motor per esdeveniments
-def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: float = 1.0, rng=None, tp: float = 0.0):
+def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: float = 1.0, rng=None, tp: float = 0.0,
+        mg: dict | None = None, fast_exit: tuple | None = None):
     """Una posició a la vegada per valor. Retorna les operacions: espelma d'entrada i de sortida,
     direcció, rendiment net (amb comissions, lliscament i finançament), pitjor moment i pes.
 
@@ -216,12 +259,15 @@ def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: flo
     i se surt exactament amb les mateixes regles (stop, senyal de sortida, temps) i costos.
 
     `tp` > 0: OBJECTIU DE GUANY. Es tanca quan el preu toca entrada × (1 ± tp) dins l'espelma, exactament a
-    aquest preu (si l'espelma toca el stop i l'objectiu alhora, es compta el stop: el cas pitjor)."""
+    aquest preu (si l'espelma toca el stop i l'objectiu alhora, es compta el stop: el cas pitjor).
+
+    `mg`: SORTIDA GESTIONADA (vegeu _managed_exit). `fast_exit`: (sortida_llarg, sortida_curt) del canal ràpid.
+    El darrer element que retorna és el millor moment de cada operació (màxim guany abans de costos)."""
     O, H, L, C, A = s.O, s.H, s.L, s.C, s.atr
     n = len(C)
     start = int(np.argmax(np.isfinite(C))) + WARMUP     # escalfament comptat des del primer dia que cotitza
     if rng is not None:
-        real = run(s, entry, exit_long, exit_short, stop_k, T, weight, tp=tp)
+        real = run(s, entry, exit_long, exit_short, stop_k, T, weight, tp=tp, mg=mg, fast_exit=fast_exit)
         held = int((real[1] - real[0] + 1).sum())
         flat = max(n - start - held, 1)
         p_in = min(1.0, max(len(real[0]), 1) / flat)
@@ -230,7 +276,7 @@ def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: flo
         entry = entry.copy()
         entry[:start] = 0
         sig = np.nonzero(entry)[0]
-    out = [[] for _ in range(6)]
+    out = [[] for _ in range(7)]
     nxt = start
     while True:
         if rng is None:
@@ -251,21 +297,40 @@ def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: flo
         ep = O[e]
         sp = ep - d * stop_k * A[i]
         end = min(n, e + T) if T else n
-        if d > 0:
+        if mg:
+            r = _managed_exit(H, L, O, d, e, end, ep, sp, A[i], exit_long if d > 0 else exit_short,
+                              (fast_exit[0] if d > 0 else fast_exit[1]) if fast_exit else None, mg)
+            if r is not None and r[0] == "stop":
+                x, lvl = r[1], r[2]
+                xp = lvl if x == e else (min(O[x], lvl) if d > 0 else max(O[x], lvl))
+                last = x
+            elif r is not None and r[1] + 1 < n:
+                x = r[1] + 1
+                xp = O[x]
+                last = x
+            else:
+                x = end - 1
+                xp = C[x]
+                last = x + 1
+            a = b = g = None
+        elif d > 0:
             a = _first(lambda u, v: L[u:v] <= sp, e, end)
             b = _first(lambda u, v: exit_long[u:v], e, end)
         else:
             a = _first(lambda u, v: H[u:v] >= sp, e, end)
             b = _first(lambda u, v: exit_short[u:v], e, end)
-        g = None
-        if tp > 0:                                         # objectiu de guany dins l'espelma
+        if not mg:
+            g = None
+        if tp > 0 and not mg:                              # objectiu de guany dins l'espelma
             tpp = ep * (1 + d * tp)
             g = _first((lambda u, v: H[u:v] >= tpp) if d > 0 else (lambda u, v: L[u:v] <= tpp), e, end)
             if g is not None and (a is None or g < a) and (b is None or g <= b):
                 a = b = None                                # l'objectiu arriba primer
             else:
                 g = None
-        if g is not None:
+        if mg:
+            pass
+        elif g is not None:
             x, xp, last = g, tpp, g
         elif a is not None and (b is None or a <= b):       # el stop dins l'espelma té prioritat
             x = a
@@ -291,10 +356,11 @@ def run(s: Sym, entry, exit_long, exit_short, stop_k: float, T: int, weight: flo
         out[3].append(gross - 2 * COST_SIDE - funding)
         out[4].append(d * (worst - ep) / ep - COST_SIDE)
         out[5].append(min(1.0, VOL_TARGET / (A[i] / C[i])))   # mida segons volatilitat, calculada en el moment del senyal
+        out[6].append(d * ((H[e:x + 1].max() if d > 0 else L[e:x + 1].min()) - ep) / ep)   # millor moment
         nxt = max(x, i + 1)
     return (np.asarray(out[0], dtype=np.int64), np.asarray(out[1], dtype=np.int64), np.asarray(out[2], dtype=np.int8),
             np.asarray(out[3], dtype=float), np.asarray(out[4], dtype=float), np.full(len(out[0]), weight),
-            np.asarray(out[5], dtype=float))
+            np.asarray(out[5], dtype=float), np.asarray(out[6], dtype=float))
 
 
 def sized(tr: dict, sizing: str) -> dict:
@@ -311,7 +377,12 @@ def combo_trades(syms: dict, fam: str, p: dict, rng=None) -> dict:
     for s in syms.values():
         if kind == "tendencia":
             en, xl, xs = trend_signals(s, p["N"], p["sortida"])
-            parts.append(run(s, en, xl, xs, p["stop"], 0, 1.0, rng, tp=p.get("tp", 0.0)))
+            mg = p.get("mg")
+            fx = None
+            if mg and mg.get("fast_n"):
+                _, fxl, fxs = trend_signals(s, p["N"], mg["fast_n"] / p["N"])
+                fx = (fxl, fxs)
+            parts.append(run(s, en, xl, xs, p["stop"], 0, 1.0, rng, tp=p.get("tp", 0.0), mg=mg, fast_exit=fx))
         elif kind == "reversio":
             en, xl, xs = rev_signals(s, p["n"], p["k"])
             parts.append(run(s, en, xl, xs, p["stop"], T, 1.0, rng))
@@ -321,7 +392,7 @@ def combo_trades(syms: dict, fam: str, p: dict, rng=None) -> dict:
             en, xl, xs = rev_signals(s, 24, p["k"])
             parts.append(run(s, np.where(s.er <= p["llindar"], en, 0), xl, xs, REGIME_STOP, REV_TIME, 0.5, rng))
     cols = list(zip(*parts))
-    out = {k: np.concatenate(v) for k, v in zip(("e", "x", "d", "net", "worst", "w", "f"), cols)}
+    out = {k: np.concatenate(v) for k, v in zip(("e", "x", "d", "net", "worst", "w", "f", "mfe"), cols)}
     order = np.argsort(out["x"], kind="stable")
     return {k: v[order] for k, v in out.items()}
 
@@ -729,7 +800,7 @@ def scale_period(raw: dict, dd_limit: float, progress, step0: int, total: int, l
 
         def merge(parts):
             cols = list(zip(*parts))
-            out = {k: np.concatenate(v) for k, v in zip(("e", "x", "d", "net", "worst", "w", "f"), cols)}
+            out = {k: np.concatenate(v) for k, v in zip(("e", "x", "d", "net", "worst", "w", "f", "mfe"), cols)}
             order = np.argsort(out["x"], kind="stable")
             return {k: v[order] for k, v in out.items()}
         t = merge(real)
@@ -791,6 +862,47 @@ def run_tp(periods: dict, dd_limit: float, progress=lambda pct, msg: None) -> di
               "supera_tots": all(out[k]["files"][j]["supera"] for k in out)} for j, tp in enumerate(TP_LEVELS)]
     return {
         "versio": 8, "mode": "objectius", "generat": datetime.now(timezone.utc).isoformat(),
+        "regles": {"canal_h": SCAN_BOT_CHANNEL, "sortida_h": SCAN_BOT_CHANNEL // 2, "stop_atr": SCAN_STOP,
+                   "exposicio_pct": round(SCAN_EXPOSURE * 100)},
+        "costos": {"operacio_pct": round(2 * COST_SIDE * 100, 2), "financament_8h_pct": FUNDING_8H * 100},
+        "caiguda_maxima_acceptada_pct": round(dd_limit * 100), "mico": MONKEY_RUNS,
+        "periodes": out, "resum": resum,
+    }
+
+
+def run_exits(periods: dict, dd_limit: float, progress=lambda pct, msg: None) -> dict:
+    total = len(periods) * len(EXIT_VARIANTS) * MONKEY_RUNS
+    step, out = 0, {}
+    for key, syms in periods.items():
+        first = next(iter(syms.values()))
+        idx, bar_h = first.idx, first.bar_h
+        notional = CAPITAL * SCAN_EXPOSURE / len(syms)
+        label = "2020-2023" if key == "passat" else "2023-2026"
+        rows = []
+        for vid, txt, mg in EXIT_VARIANTS:
+            p = {"N": SCAN_BOT_CHANNEL, "sortida": 0.5, "stop": SCAN_STOP, "mg": mg or None}
+            t = combo_trades(syms, "tendencia_bot", p)
+            monkey = []
+            for r in range(MONKEY_RUNS):
+                mt = combo_trades(syms, "tendencia_bot", p, rng=np.random.default_rng(67867967 * r + len(rows)))
+                monkey.append(period(mt, WARMUP, len(idx), notional)["pnl"])
+                step += 1
+                progress(round(step / total * 95, 1), f"Sortida «{txt}» ({label}): prova del mico {r + 1}/{MONKEY_RUNS}")
+            row = scan_row(t, monkey, idx, bar_h, notional, dd_limit, WARMUP)
+            m = (t["x"] >= WARMUP) & (t["x"] < len(idx))
+            mfe, nets = t["mfe"][m], t["net"][m]
+            big = mfe >= 0.05
+            row.update({"id": vid, "text": txt, "bot": vid == "actual",
+                        "millor_moment_mitja_pct": round(float(mfe.mean() * 100), 2) if len(mfe) else None,
+                        "arriben_5_pct": int(big.sum()),
+                        "arriben_5_i_perden_pct": round(float((nets[big] <= 0).mean() * 100)) if big.any() else None})
+            rows.append(row)
+        btc = syms["BTC/EUR"].C if "BTC/EUR" in syms else first.C
+        out[key] = {**period_info(idx, btc, WARMUP), "files": rows}
+    resum = [{"id": v[0], "text": v[1], "supera_tots": all(out[k]["files"][j]["supera"] for k in out)}
+             for j, v in enumerate(EXIT_VARIANTS)]
+    return {
+        "versio": 11, "mode": "sortides", "generat": datetime.now(timezone.utc).isoformat(),
         "regles": {"canal_h": SCAN_BOT_CHANNEL, "sortida_h": SCAN_BOT_CHANNEL // 2, "stop_atr": SCAN_STOP,
                    "exposicio_pct": round(SCAN_EXPOSURE * 100)},
         "costos": {"operacio_pct": round(2 * COST_SIDE * 100, 2), "financament_8h_pct": FUNDING_8H * 100},
@@ -906,13 +1018,16 @@ def load(synthetic_data: bool = False) -> dict:
 
 
 def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = False, fast: bool = False,
-         scan: bool = False, scale: bool = False, tp: bool = False, micro: bool = False, corr: bool = False) -> dict:
+         scan: bool = False, scale: bool = False, tp: bool = False, micro: bool = False, corr: bool = False,
+         exits: bool = False) -> dict:
     t0 = time.time()
-    mode = "micro" if micro else "correlacio" if corr else "objectius" if tp else "escalat" if scale else "terme_mig" if scan else "rapid" if fast else "passat" if past else "actual"
+    mode = "sortides" if exits else "micro" if micro else "correlacio" if corr else "objectius" if tp else "escalat" if scale else "terme_mig" if scan else "rapid" if fast else "passat" if past else "actual"
     write_status(estat="descarregant", mode=mode, pct=0, missatge="Preparant les dades")
     try:
         prog = lambda pct, msg: write_status(estat="provant", mode=mode, pct=pct, missatge=msg)   # noqa: E731
-        if micro or corr:
+        if exits:
+            res = run_exits({"passat": load_past(synthetic), "recent": load(synthetic)}, dd_limit_pct / 100, prog)
+        elif micro or corr:
             from . import lab_micro
             if micro:
                 res = lab_micro.run_micro_lab(dd_limit_pct / 100, synthetic, prog)
@@ -933,7 +1048,7 @@ def main(cfg: dict, dd_limit_pct: float, synthetic: bool = False, past: bool = F
         res["mode"] = mode
         res["durada_min"] = round((time.time() - t0) / 60, 1)
         res["dades_sintetiques"] = synthetic
-        out = RESULTS_MICRO_FILE if micro else RESULTS_CORR_FILE if corr else RESULTS_TP_FILE if tp else RESULTS_SCALE_FILE if scale else RESULTS_SCAN_FILE if scan else RESULTS_FAST_FILE if fast else RESULTS_PAST_FILE if past else RESULTS_FILE
+        out = RESULTS_EXITS_FILE if exits else RESULTS_MICRO_FILE if micro else RESULTS_CORR_FILE if corr else RESULTS_TP_FILE if tp else RESULTS_SCALE_FILE if scale else RESULTS_SCAN_FILE if scan else RESULTS_FAST_FILE if fast else RESULTS_PAST_FILE if past else RESULTS_FILE
         tmp = out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(res, f, default=str)
