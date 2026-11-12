@@ -40,7 +40,7 @@ LAB_RESULTS_MICRO = os.path.join(LAB_DIR, "resultats_micro.json")
 LAB_RESULTS_CORR = os.path.join(LAB_DIR, "resultats_correlacio.json")
 LAB_RESULTS_EXITS = os.path.join(LAB_DIR, "resultats_sortides.json")
 LAB_MODES = {"actual": [], "passat": ["--passat"], "rapid": ["--rapid"], "terme_mig": ["--terme-mig"], "escalat": ["--escalat"], "objectius": ["--objectius"],
-             "micro": ["--micro"], "correlacio": ["--correlacio"], "sortides": ["--sortides"]}
+             "micro": ["--micro"], "correlacio": ["--correlacio"], "sortides": ["--sortides"], "tot": ["--tot"]}
 # Fitxers dels laboratoris retirats: s'esborren en arrencar perquè no quedi cap resultat antic
 OLD_LAB_FILES = ["estat.json", "resultats.json", "estat_lc.json", "resultats_lc.json", "estat_ct.json", "resultats_ct.json",
                  "estat_graella.json", "resultats_graella.json"]

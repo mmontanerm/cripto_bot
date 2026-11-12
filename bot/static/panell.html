@@ -765,8 +765,10 @@ function renderLab(){
     +(runMode==="actual"?prog:(res?fold(`Veure els resultats del laboratori principal${res.guanyadora?"":" · cap estratègia supera el criteri"}`,mb.html):labIntro));
   const btn=(mode,has,label,cls)=>`<button class="btn ${cls} lab-go" ${running?"disabled":""} onclick="startLab('${mode}')">${has?"Torna a fer ":"Fes "}${label}</button>`;
   const ctrl=`<div class="controls" style="margin-top:14px">${labSelect(lim)}
-      ${btn("sortides",exr,"la prova de sortides","")}${btn("objectius",tpr,"la prova d'objectius","")}${btn("micro",mic,"la prova de micro-guanys","")}${btn("correlacio",cor,"la prova del límit de posicions","")}${btn("escalat",scl,"l'escalat","ghost")}${btn("terme_mig",scan,"el terme mig","ghost")}${btn("rapid",fast,"la prova ràpida","ghost")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
-  body.innerHTML=errMsg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+exSec+corSec+tpSec+micSec+sclSec+scanSec+fastSec+pastSec+mainSec+ctrl;
+      <button class="btn lab-go" ${running?"disabled":""} onclick="startLab('tot')">Fes totes les proves (1 h aprox.)</button>
+      ${btn("sortides",exr,"la prova de sortides","ghost")}${btn("objectius",tpr,"la prova d'objectius","")}${btn("micro",mic,"la prova de micro-guanys","")}${btn("correlacio",cor,"la prova del límit de posicions","")}${btn("escalat",scl,"l'escalat","ghost")}${btn("terme_mig",scan,"el terme mig","ghost")}${btn("rapid",fast,"la prova ràpida","ghost")}${btn("passat",past,"la prova 2020–2023","ghost")}${btn("actual",res,"el principal","ghost")}</div>`;
+  const totProg = runMode==="tot" ? `<div class="winner" style="border-color:var(--amber)"><h3>Fent totes les proves</h3>${prog}<p class="note">Ordre: sortides, límit de posicions, objectius de guany i micro-guanys. Cada resultat apareix a la seva secció tan bon punt acaba.</p></div>` : "";
+  body.innerHTML=errMsg+totProg+`<p>Costos: 0,14 % per operació i 0,01 % cada 8 hores a les llargues. Rendiments passats no garanteixen els futurs.</p>`+exSec+corSec+tpSec+micSec+sclSec+scanSec+fastSec+pastSec+mainSec+ctrl;
   const draw=()=>{ if(fb&&runMode!=="rapid") fb.draw(); if(pb&&runMode!=="passat") pb.draw(); if(mb&&runMode!=="actual") mb.draw(); };
   draw();
   body.querySelectorAll("details").forEach(d=>d.addEventListener("toggle",draw));

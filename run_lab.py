@@ -10,6 +10,7 @@
     python run_lab.py --correlacio   # límit de posicions en la mateixa direcció
     python run_lab.py --objectius    # regles del bot amb objectius de guany fixos
     python run_lab.py --escalat      # regles del bot amb tots els paràmetres escalats (espelmes de 60 a 5 min)
+    python run_lab.py --tot          # les 4 proves pendents seguides: sortides, límit de posicions, objectius i micro-guanys
     python run_lab.py --synthetic    # dades inventades, només per comprovar que funciona
 
 Normalment es llança des del panell web (botó "Fes la prova").
@@ -38,8 +39,35 @@ if __name__ == "__main__":
                     help="regles del bot amb un objectiu de guany fix (0,5 % a 10 %)")
     ap.add_argument("--escalat", action="store_true",
                     help="regles del bot amb tots els paràmetres escalats (espelmes de 60 a 5 minuts)")
+    ap.add_argument("--tot", action="store_true",
+                    help="fa seguides les proves de sortides, límit de posicions, objectius i micro-guanys")
     ap.add_argument("--rapid", action="store_true", help="prova ràpida: espelmes de 15 minuts, 10-12 operacions al dia")
     a = ap.parse_args()
     setup("lab")
     cfg = ConfigWatcher("config.yaml").cfg
-    lab_wf.main(cfg, max(5.0, min(50.0, a.dd)), synthetic=a.synthetic, past=a.passat, fast=a.rapid, scan=a.terme_mig, scale=a.escalat, tp=a.objectius, micro=a.micro, corr=a.correlacio, exits=a.sortides)
+    dd = max(5.0, min(50.0, a.dd))
+    if a.tot:
+        # Una darrere l'altra; si una falla, continua amb la següent. Cada una desa els seus resultats.
+        tests = [("sortides", "com assegurar els guanys", {"exits": True}),
+                 ("correlacio", "límit de posicions", {"corr": True}),
+                 ("objectius", "objectius de guany", {"tp": True}),
+                 ("micro", "micro-guanys", {"micro": True})]
+        original = lab_wf.write_status
+        for k, (mode, name, kw) in enumerate(tests, 1):
+            def prefixed(_k=k, _name=name, **st):
+                st["mode"] = "tot"
+                if st.get("estat") in ("descarregant", "provant"):
+                    st["missatge"] = f"Prova {_k} de {len(tests)} ({_name}) · {st.get('missatge', '')}"
+                elif st.get("estat") == "fet" and _k < len(tests):
+                    st.update(estat="provant", missatge=f"Prova {_k} de {len(tests)} ({_name}) acabada. Començant la següent…")
+                original(**st)
+            lab_wf.write_status = prefixed
+            try:
+                lab_wf.main(cfg, dd, synthetic=a.synthetic, **kw)
+            except Exception:
+                pass                                   # l'error ja queda al log; continua amb la següent
+        lab_wf.write_status = original
+        original(estat="fet", pct=100, missatge="Les 4 proves han acabat. Els resultats són a cada secció del laboratori.")
+    else:
+        lab_wf.main(cfg, dd, synthetic=a.synthetic, past=a.passat, fast=a.rapid, scan=a.terme_mig, scale=a.escalat,
+                    tp=a.objectius, micro=a.micro, corr=a.correlacio, exits=a.sortides)
